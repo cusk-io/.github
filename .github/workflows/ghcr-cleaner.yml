@@ -13,7 +13,7 @@ jobs:
       - uses: quartx-analytics/ghcr-cleaner@v1
         with:
           owner-type: org # or 'user' for a personal account
-          token: ${{ secrets.GHT_PAT_CONTAINER_RETENTION_POLICY }}
+          token: ${{ secrets.GHT_PAT_GHCR_CLEANER }}
           repository-owner: ${{ github.repository_owner }}
 
           # Use repository name to specify a repository
