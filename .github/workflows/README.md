@@ -1,9 +1,20 @@
-# GHCR cleanup of stale docker images with `ghcr-cleaner`
+# Workflow files
+
+## Naming convention
+
+Use `test-` prefix for workflow used to test a reusable workflow
+
+- `docker-build-push.yml` – reusable workflow for building Docker images.
+- `test-docker-build-push.yml` – self-test for the above workflow (runs on push).
+
+All reusable workflows are triggered via `workflow_call`. Self-tests use `push` and `workflow_dispatch`.
+
+## ghcr-cleaner
 
 Safely remove stale images from GHCR using [quartx-analytics/ghcr-cleaner](https://github.com/marketplace/actions/ghcr-cleaner).  
 Handles multi‑arch, multi‑stage, and BuildKit cache images without breaking them.
 
-## Key Points
+### Key Points
 
 - **Truly untagged deletion** – only untagged images **not referenced** by any surviving tagged image are removed. References are extracted from OCI indexes and Docker manifest lists (covers multi‑arch images and `mode=max` build cache).
 - **`filter-tags` vs `skip-tags`**:
@@ -13,7 +24,7 @@ Handles multi‑arch, multi‑stage, and BuildKit cache images without breaking 
 - **`keep-at-most`** keeps the _N_ most recent tagged images that pass `filter-tags` and aren’t skipped. All older matching ones are deleted.
 - **Untagged protection chain**: dependencies are gathered **after** `keep-at-most` pruning, so only untagged images orphaned by the deletion of all their referencing tags become eligible for removal.
 
-## Minimal Workflow
+### Minimal Workflow
 
 ```yaml
 - uses: quartx-analytics/ghcr-cleaner@v1
