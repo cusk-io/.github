@@ -1,0 +1,23 @@
+name: Update Docker Image
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  docker-image:
+    uses: ./.github/workflows/docker-build-push.yml
+    with:
+      image_name: ghcr.io/cusk-io/presidio-analyzer
+      test_script: |
+        # Install test tools
+        curl -fsSL https://github.com/Orange-OpenSource/hurl/releases/download/7.1.0/hurl_7.1.0_amd64.deb -o /tmp/hurl.deb
+        sudo dpkg -i /tmp/hurl.deb
+        # Run tests against the started service
+        hurl --test --variable base_url=localhost:3000 tests/
+    secrets: inherit

@@ -1,0 +1,183 @@
+name: Docker Build, Test & Push
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        required: true
+        type: string
+        description: "Full image name, e.g. ghcr.io/cusk-io/my-app"
+      test_script:
+        required: true
+        type: string
+        description: "Shell script that runs tests after the service is healthy"
+      compose_file:
+        required: false
+        type: string
+        default: "docker-compose.yml"
+        description: "Path to the compose file"
+      service_name:
+        required: false
+        type: string
+        default: "app"
+        description: "Name of the docker compose service to start (must have a healthcheck)"
+    outputs:
+      test_passed:
+        value: ${{ jobs.test.outputs.test_passed }}
+
+env:
+  IMAGE: ${{ inputs.image_name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      sha_tag: ${{ steps.meta.outputs.sha_tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set metadata
+        id: meta
+        run: echo "sha_tag=sha-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine cache tags
+        id: cache-tags
+        run: |
+          # Always include latest as a fallback
+          CACHE_FROM="type=registry,ref=${{ env.IMAGE }}:latest"
+
+          # If the ref is a branch, add branch-specific cache sources
+          if [[ "${{ github.ref_type }}" == "branch" ]]; then
+            BRANCH="${{ github.ref_name }}"
+            # Prepend the final image of the branch (still useful for incremental builds)
+            CACHE_FROM="type=registry,ref=${{ env.IMAGE }}:branch-${BRANCH}"$'\n'"${CACHE_FROM}"
+            # Prepend (highest priorirty) full build cache from previous runs (richest source)
+            CACHE_FROM="type=registry,ref=${{ env.IMAGE }}:buildcache-${BRANCH}"$'\n'"${CACHE_FROM}"
+            # Push cache to the dedicated buildcache tag
+            CACHE_TO="type=registry,ref=${{ env.IMAGE }}:buildcache-${BRANCH},mode=max"
+          else
+            CACHE_TO=""
+          fi
+
+          # Write multiline outputs
+          echo "cache_from<<EOF" >> $GITHUB_OUTPUT
+          echo "$CACHE_FROM" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "cache_to=$CACHE_TO" >> $GITHUB_OUTPUT
+
+      - name: Build and push SHA-tagged image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}:${{ steps.meta.outputs.sha_tag }}
+          platforms: linux/amd64
+          cache-from: ${{ steps.cache-tags.outputs.cache_from }}
+          cache-to: ${{ steps.cache-tags.outputs.cache_to }}
+
+  test:
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    outputs:
+      test_passed: ${{ steps.tests.outcome == 'success' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Start services
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          TAG: ${{ needs.build.outputs.sha_tag }}
+        run: |
+          docker compose -f ${{ inputs.compose_file }} up -d --wait --no-build ${{ inputs.service_name }}
+
+      - name: Run tests
+        id: tests
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          TAG: ${{ needs.build.outputs.sha_tag }}
+        run: ${{ inputs.test_script }}
+
+      - name: Stop services
+        if: always()
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          TAG: ${{ needs.build.outputs.sha_tag }}
+        run: docker compose -f ${{ inputs.compose_file }} down --volumes
+
+  push-branch-tag:
+    needs: [build, test]
+    if: |
+      needs.test.outputs.test_passed == 'true' &&
+      github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and push branch tag
+        env:
+          SHA_TAG: ${{ needs.build.outputs.sha_tag }}
+          BRANCH: ${{ github.ref_name }}
+          DEFAULT_BRANCH: $default-branch
+        run: |
+          docker pull ${{ env.IMAGE }}:${SHA_TAG}
+          docker tag ${{ env.IMAGE }}:${SHA_TAG} ${{ env.IMAGE }}:branch-${BRANCH}
+          docker push ${{ env.IMAGE }}:branch-${BRANCH}
+          if [[ "${BRANCH}" == "${DEFAULT_BRANCH}" ]]; then
+            docker tag ${{ env.IMAGE }}:${SHA_TAG} ${{ env.IMAGE }}:latest
+            docker push ${{ env.IMAGE }}:latest
+          fi
+
+  push-version-tags:
+    needs: [build, test]
+    if: |
+      needs.test.outputs.test_passed == 'true' &&
+      startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull and tag version tags
+        env:
+          SHA_TAG: ${{ needs.build.outputs.sha_tag }}
+        run: |
+          docker pull ${{ env.IMAGE }}:${SHA_TAG}
+          VERSION="${GITHUB_REF_NAME#v}"
+          docker tag ${{ env.IMAGE }}:${SHA_TAG} ${{ env.IMAGE }}:${VERSION}
+          docker push ${{ env.IMAGE }}:${VERSION}
+          MINOR="${VERSION%.*}"
+          docker tag ${{ env.IMAGE }}:${SHA_TAG} ${{ env.IMAGE }}:${MINOR}
+          docker push ${{ env.IMAGE }}:${MINOR}
+          MAJOR="${MINOR%.*}"
+          docker tag ${{ env.IMAGE }}:${SHA_TAG} ${{ env.IMAGE }}:${MAJOR}
+          docker push ${{ env.IMAGE }}:${MAJOR}

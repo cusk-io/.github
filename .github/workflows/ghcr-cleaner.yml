@@ -1,0 +1,38 @@
+name: GHCR Cleaner
+
+on:
+  workflow_dispatch:
+  #schedule:
+  #  - cron: "0 7 * * *" # Run daily 7am UTC
+
+jobs:
+  cleanup-sha-tags:
+    runs-on: ubuntu-latest
+    name: Delete old sha-* tags and unreferenced untagged images
+    steps:
+      - uses: quartx-analytics/ghcr-cleaner@v1
+        with:
+          owner-type: org # or 'user' for a personal account
+          token: ${{ secrets.GHT_PAT_CONTAINER_RETENTION_POLICY }}
+          repository-owner: ${{ github.repository_owner }}
+
+          # Use repository name to specify a repository
+          # repository-name: ""
+          # Use package-name to sepcify a package (no wildcards)
+          #package-name: "presidio-analyzer"
+
+          # Delete truly unreferenced untagged images (multi-arch safe)
+          delete-untagged: true
+
+          # For tagged images, keep only the 5 most recent that match our CI patterns
+          keep-at-most: 5
+
+          # Only delete tagged images within this list, keeping at most "keep-at-most"
+          filter-tags: "sha-*,otherexampletag*"
+
+          # skip-tags: Never delete these tags, using wildcards for broad protection
+          # Redundant in present case since these will not be included in filter-tags scope anyways
+          skip-tags: "latest,buildcache-*,branch-*,[0-9]*"
+
+          # set to false after verifying planned deletions in github action log output
+          dry-run: true
