@@ -142,12 +142,11 @@ jobs:
         env:
           SHA_TAG: ${{ needs.build.outputs.sha_tag }}
           BRANCH: ${{ github.ref_name }}
-          DEFAULT_BRANCH: $default-branch
         run: |
           docker pull ${{ env.IMAGE }}:${SHA_TAG}
           docker tag ${{ env.IMAGE }}:${SHA_TAG} ${{ env.IMAGE }}:branch-${BRANCH}
           docker push ${{ env.IMAGE }}:branch-${BRANCH}
-          if [[ "${BRANCH}" == "${DEFAULT_BRANCH}" ]]; then
+          if [[ "${BRANCH}" == "main" || "${BRANCH}" == "master" ]]; then
             docker tag ${{ env.IMAGE }}:${SHA_TAG} ${{ env.IMAGE }}:latest
             docker push ${{ env.IMAGE }}:latest
           fi
