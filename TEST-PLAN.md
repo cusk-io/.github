@@ -34,15 +34,15 @@ name: Test docker-build-push
 on:
   push:
     paths:
-      - '.github/workflows/docker-build-push.yml'
-      - '.github/workflows/test-docker-build-push.yml'
-      - '.github/test-cases/**'
+      - ".github/workflows/docker-build-push.yml"
+      - ".github/workflows/test-docker-build-push.yml"
+      - ".github/test-cases/docker-build-push/**"
   workflow_dispatch: {}
-```
 
-Each case runs as an explicit independent job. All cases must pass for the overall run to succeed. Cases are not implemented as a matrix because `uses:` at job level (reusable workflow call) and `strategy: matrix:` are mutually exclusive in GitHub Actions — a job is either a reusable workflow call or a regular job with a matrix, not both.
+permissions:
+  contents: read
+  packages: write
 
-```yaml
 jobs:
   case-01-valid-setup:
     uses: ./.github/workflows/docker-build-push.yml
@@ -55,7 +55,24 @@ jobs:
     needs: [case-01-valid-setup]
     if: always()
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image_name: dot-github-test-docker-build-push-case-01-valid-setup
+    steps:
+      - uses: snok/container-retention-policy@v3.0.0
+        with:
+          account: cusk-io
+          token: ${{ secrets.GHT_PAT_CONTAINER_RETENTION_POLICY }}
+          image-names: ${{ matrix.image_name }}
+          image-tags: "!latest !buildcache-*"
+          tag-selection: tagged
+          cut-off: 0s
+          keep-n-most-recent: 0
+          dry-run: false
 ```
+
+---
 
 ## 4. Test Case Structure
 
@@ -65,16 +82,6 @@ Every case is self-contained at `.github/test-cases/docker-build-push/<case-name
 .github/test-cases/docker-build-push/
   case-01-valid-setup/
     docker-compose.yml   ← app (with dockerfile_inline) + test service
-  case-02-bad-dockerfile/
-    docker-compose.yml   ← app dockerfile_inline has syntax error
-  case-03-missing-healthcheck/
-    docker-compose.yml   ← no healthcheck defined — compose --wait will timeout
-  case-04-test-script-fails/
-    docker-compose.yml   ← test service exits non-zero
-  case-05-image-name-wrong-scope/
-    docker-compose.yml   ← app build succeeds, push fails (wrong org scope)
-  case-06-missing-compose-file/
-    # No fixture files needed — compose_file points to non-existent path
 ```
 
 **Self-contained (intentional duplication):** Each case is a complete, independent snapshot. No base images, no shared fixtures. A single `docker-compose.yml` with `dockerfile_inline` replaces the need for separate Dockerfile and test script files.
@@ -85,14 +92,16 @@ Every case is self-contained at `.github/test-cases/docker-build-push/<case-name
 
 ## 5. Case Definitions
 
-| Case | Reusable workflow outcome | Rationale |
-|---|---|---|
-| case-01-valid-setup | All jobs succeed; SHA tag pushed | Baseline sanity check |
-| case-02-bad-dockerfile | Build job fails | Detects broken Dockerfile escapes in dockerfile_inline |
-| case-03-missing-healthcheck | Test job fails (compose --wait times out) | healthcheck is a required guard |
-| case-04-test-script-fails | Test job fails | test service exit code is propagated |
-| case-05-image-name-wrong-scope | Push fails (auth/permission error) | Workflow handles wrong-scope gracefully |
-| case-06-missing-compose-file | Test job fails (file not found) | compose_file validation works |
+Only case-01 is currently implemented. Cases 02–06 are pending an architecture review (see Section 7).
+
+| Case | Status | Reusable workflow outcome | Rationale |
+|---|---|---|---|
+| case-01-valid-setup | ✅ Active | All jobs succeed; SHA tag pushed | Baseline sanity check |
+| case-02-bad-dockerfile | ❌ Discarded | Build job fails | Requires `continue-on-error` + output assertion pattern; revisit if needed |
+| case-03-missing-healthcheck | 🔁 Pending | Test job fails (compose --wait times out) | Service-based model; see Section 7 |
+| case-04-test-script-fails | 🔁 Pending | Test job fails | Service-based model; see Section 7 |
+| case-05-image-name-wrong-scope | ❌ Discarded | Push fails (auth/permission error) | Not a realistic failure scenario |
+| case-06-missing-compose-file | 🔁 Pending | Test job fails (file not found) | Service-based model; see Section 7 |
 
 ---
 
@@ -105,12 +114,16 @@ teardown:
   needs: [case-01-valid-setup]
   if: always()
   runs-on: ubuntu-latest
+  strategy:
+    matrix:
+      include:
+        - image_name: dot-github-test-docker-build-push-case-01-valid-setup
   steps:
-    - uses: snok/container-retention-policy@v3
+    - uses: snok/container-retention-policy@v3.0.0
       with:
         account: cusk-io
         token: ${{ secrets.GHT_PAT_CONTAINER_RETENTION_POLICY }}
-        image-names: dot-github-test-docker-build-push-case-01-valid-setup
+        image-names: ${{ matrix.image_name }}
         image-tags: "!latest !buildcache-*"
         tag-selection: tagged
         cut-off: 0s
@@ -122,31 +135,23 @@ Key behaviors:
 - `image-tags: "!latest !buildcache-*"` — negate both patterns; delete everything EXCEPT `latest` and `buildcache-*`. This preserves the `buildcache-<branch>` tags that subsequent builds will import from.
 - `tag-selection: tagged` — only tagged versions. Untagged/dangling images are handled separately by GHCR's own garbage collection.
 - `cut-off: 0s` / `keep-n-most-recent: 0` — no retention, delete everything matching immediately.
-- Each case has its own full package name (no wildcards in `image-names`); add one `uses:` step per case.
 - Uses `${{ secrets.GHT_PAT_CONTAINER_RETENTION_POLICY }}` (PAT), not `GITHUB_TOKEN`, because the retention policy action requires a PAT with `packages: write` scope for org-level package operations.
-- `dry-run: true` first to verify targeting before enabling actual deletion.
 
 ---
 
 ## 7. Design Decisions
 
 **Why explicit jobs (not a matrix)?**
-GitHub Actions does not allow `uses:` at job level to coexist with `strategy: matrix:` — a job is either a reusable workflow call (`uses:`) or a regular job (`runs-on`/`steps`/`strategy:`), not both. Explicit named jobs is the correct pattern. GitHub still runs independent jobs concurrently by default.
+GitHub Actions does not allow `uses:` at job level to coexist with `strategy: matrix:` — a job is either a reusable workflow call (`uses:`) or a regular job (`runs-on`/`steps`/`strategy:`), not both. Explicit named jobs is the correct pattern for case jobs. The teardown job is a regular `runs-on` job, so it uses a matrix freely.
 
 **Why self-contained cases with duplication?**
 Shared base files would create hidden coupling — a change to a "base" file could silently fix or break multiple cases without an obvious diff. Self-contained snapshots make each case's contract explicit.
 
 **Why multiple `--set` for cache sources?**
-Buildx interprets each `--set key=value` as a replacement. When the same key appears multiple times (e.g., `--set app.cache-from=source1 --set app.cache-from=source2`), buildx merges them into a list. Space-separated values in a single `--set` are treated as a literal string, not multiple sources. Newline characters in env vars become literal `\n` in shell expansion, causing parse failures. One `--set` per cache source is the correct pattern.
+Buildx interprets each `--set key=value` as a replacement. When the same key appears multiple times (e.g., `--set app.cache-from=source1 --set app.cache-from=source2`), buildx merges them into a list. Space-separated values in a single `--set` are treated as a literal string, not multiple sources. One `--set` per cache source is the correct pattern.
 
-**Why `docker buildx bake` instead of `docker/build-push-action`?**
+**Why `docker buildx bake` with `dockerfile_inline`?**
 Buildx bake reads compose files natively and supports `dockerfile_inline` for single-file case fixtures. The compose-based approach is simpler and more maintainable than separate Dockerfile + script + action config.
-
-**Why test images are always pushed, even in failure cases?**
-Some cases (02, 05) may fail before an image is pushed, but cases 01, 03, 04 will push one. Teardown cleans all images that were actually pushed. Cases that fail before push have nothing to clean.
-
-**Why path-filtered `push` trigger instead of `workflow_call`?**
-`workflow_call` is for when another workflow invokes this one. This test workflow is self-triggering — it runs on changes to the files it tests. The path filter ensures it only fires when relevant files change.
 
 **Why `dot-github-test-` prefix on image names?**
 The `cusk-io` org is where production images live. The `dot-github-test-` prefix keeps test images clearly distinguishable in the GitHub UI and prevents accidental pushes to production tag names.
@@ -158,21 +163,20 @@ The `cusk-io` org is where production images live. The `dot-github-test-` prefix
 
 ## 8. Extensibility
 
-Adding a new case requires changes in two places:
+Adding a new case requires changes in three places:
 
 1. Create `.github/test-cases/docker-build-push/case-XX-<name>/docker-compose.yml`.
 2. Add a new named job to `test-docker-build-push.yml`:
    ```yaml
-   case-02-bad-dockerfile:
+   case-02-some-new-case:
      uses: ./.github/workflows/docker-build-push.yml
      secrets: inherit
      with:
-       image_name: ghcr.io/cusk-io/dot-github-test-docker-build-push-case-02-bad-dockerfile
-       compose_file: ./.github/test-cases/docker-build-push/case-02-bad-dockerfile/docker-compose.yml
+       image_name: ghcr.io/cusk-io/dot-github-test-docker-build-push-case-02-some-new-case
+       compose_file: ./.github/test-cases/docker-build-push/case-02-some-new-case/docker-compose.yml
    ```
 3. Add the new case name to the teardown's `needs:` list.
-
-No other edits required. The teardown uses a separate `uses:` step per case package name, and the path filter on the `push` trigger already covers any new case directory.
+4. Add an entry to the teardown's `strategy.matrix.include`.
 
 Adding a test for a new workflow (e.g. `ghcr-cleaner`):
 
@@ -195,7 +199,23 @@ Adding a test for a new workflow (e.g. `ghcr-cleaner`):
 
 ---
 
-## 10. Open Questions — Resolved
+## 10. Open Questions — Pending Architecture Review
+
+The current `docker-build-push.yml` reusable workflow uses `docker compose --wait` with `service_healthy` to test images. This pattern requires a long-running container with a healthcheck, which is unsuitable for short-lived tool images (e.g. a Go binary in a distroless container).
+
+**Planned architecture change:** Replace the `compose_file`-based test pattern with a `test_script` input — a user-provided shell script that runs after the image is built and pushed. The script can `docker run` the image as a one-off command, as a long-running service with healthcheck, or not at all. This decouples the test contract from the container's runtime behavior.
+
+Once the architecture is updated:
+
+| Case | Status on hold | New approach |
+|---|---|---|
+| case-03-missing-healthcheck | 🔁 Pending | `test_script` that runs the image without a healthcheck, asserting the image is runnable |
+| case-04-test-script-fails | 🔁 Pending | `test_script` that exits non-zero, asserting `test_passed: false` is propagated |
+| case-06-missing-compose-file | 🔁 Pending | Irrelevant — `test_script` replaces `compose_file` |
+
+---
+
+## 11. Open Questions — Resolved
 
 | # | Question | Resolution |
 |---|---|---|
@@ -203,7 +223,6 @@ Adding a test for a new workflow (e.g. `ghcr-cleaner`):
 | 2 | Test execution | `docker compose run --rm test` — test service defined in compose, exit code propagated |
 | 3 | Multiple cache-from | One `--set app.cache-from=...` per source, not space/comma/newline separated |
 | 4 | Teardown | `snok/container-retention-policy` with `image-tags: "!latest !buildcache-*"` preserves cache tags |
-| 5 | Jobs vs matrix | Explicit jobs required; `uses:` and `strategy: matrix:` are mutually exclusive |
-| 6 | Discarded cases | case-05 (malformed image name) and case-08 (branch-tag rejects SHA) discarded |
-| 4 | Failure = gate? | Yes — a failing case causes the overall run to fail, acting as a release gate |
-| 5 | Image namespace | `ghcr.io/cusk-io/dot-github-test-docker-build-push-<case>` |
+| 5 | Jobs vs matrix | Explicit jobs required for `uses:` (reusable workflow call); matrix allowed on regular `runs-on` jobs |
+| 6 | Discarded cases | case-02 (bad-dockerfile), case-05 (wrong-scope) discarded |
+| 7 | Teardown matrix | Matrix works in teardown because it uses step-level `uses:` (action), not job-level `uses:` (reusable workflow call) |
