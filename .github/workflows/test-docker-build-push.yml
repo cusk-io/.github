@@ -25,14 +25,18 @@ jobs:
     needs: [case-01-valid-setup]
     if: always()
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image_name: dot-github-test-docker-build-push-case-01-valid-setup
     steps:
       - uses: snok/container-retention-policy@v3.0.0
         with:
           account: cusk-io
           token: ${{ secrets.GHT_PAT_CONTAINER_RETENTION_POLICY }}
-          image-names: dot-github-test-docker-build-push-case-01-valid-setup
+          image-names: ${{ matrix.image_name }}
           image-tags: "!latest !buildcache-*"
           tag-selection: tagged
-          cut-off: 0s # everything
+          cut-off: 0s
           keep-n-most-recent: 0
           dry-run: false

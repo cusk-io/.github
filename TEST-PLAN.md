@@ -11,13 +11,11 @@ The `docker-build-push.yml` reusable workflow is a critical, high-privilege comp
 ```
 .github/
   workflows/
-    docker-build-push.yml               ← existing reusable workflow
-    test-docker-build-push.yml          ← NEW: the test orchestrator
-  test-cases/                           ← NEW: all test fixtures live here
-    docker-build-push/                  ← fixtures scoped to this workflow
-      .gitkeep                          ← placeholder; remove when cases are added
-    ghcr-cleaner/                       ← placeholder for future workflow tests
-      .gitkeep
+    docker-build-push.yml               ← reusable workflow under test
+    test-docker-build-push.yml          ← test orchestrator
+  test-cases/
+    docker-build-push/                 ← fixtures scoped to this workflow
+      case-01-valid-setup/            ← one compose file per case
 ```
 
 **`.github/test-cases/`** is the base directory. Each tested workflow gets its own subdirectory, keeping fixtures scoped and preventing collisions when other workflows get their own test suites (e.g. a future `test-ghcr-cleaner.yml` would have fixtures at `.github/test-cases/ghcr-cleaner/`).
@@ -36,48 +34,43 @@ name: Test docker-build-push
 on:
   push:
     paths:
-      - '.github/workflows/docker-build-push.yml'
-      - '.github/workflows/test-docker-build-push.yml'
-      - '.github/test-cases/**'
+      - ".github/workflows/docker-build-push.yml"
+      - ".github/workflows/test-docker-build-push.yml"
+      - ".github/test-cases/docker-build-push/**"
   workflow_dispatch: {}
-```
 
-Each case runs as an independent parallel job. All cases must pass for the overall run to succeed.
+permissions:
+  contents: read
+  packages: write
 
-```yaml
 jobs:
-  case:
+  case-01-valid-setup:
+    uses: ./.github/workflows/docker-build-push.yml
+    secrets: inherit
+    with:
+      image_name: ghcr.io/cusk-io/dot-github-test-docker-build-push-case-01-valid-setup
+      compose_file: ./.github/test-cases/docker-build-push/case-01-valid-setup/docker-compose.yml
+
+  teardown:
+    needs: [case-01-valid-setup]
+    if: always()
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
-          - case: case-01-valid-setup
-            expected: success
-          - case: case-02-bad-dockerfile
-            expected: failure
-          - case: case-03-missing-healthcheck
-            expected: failure
-          - case: case-04-test-script-fails
-            expected: failure
-          - case: case-05-malformed-image-name
-            expected: failure
-          - case: case-06-image-name-wrong-scope
-            expected: failure
-          - case: case-07-missing-compose-file
-            expected: failure
-          - case: case-08-branch-tag-rejects-sha
-            expected: success
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
+          - image_name: dot-github-test-docker-build-push-case-01-valid-setup
     steps:
-      - name: Run ${{ matrix.case }}
-        run: |
-          echo "::notice::Running case ${{ matrix.case }}, expecting ${{ matrix.expected }}"
-          echo "expected=${{ matrix.expected }}" >> $GITHUB_OUTPUT
-          echo "cases=${{ toJSON(matrix.include.*.case) }}" >> $GITHUB_OUTPUT
-
-  teardown:
-    needs: [case]
-    if: always()
+      - uses: snok/container-retention-policy@v3.0.0
+        with:
+          account: cusk-io
+          token: ${{ secrets.GHT_PAT_CONTAINER_RETENTION_POLICY }}
+          image-names: ${{ matrix.image_name }}
+          image-tags: "!latest !buildcache-*"
+          tag-selection: tagged
+          cut-off: 0s
+          keep-n-most-recent: 0
+          dry-run: false
+```
 
 ---
 
@@ -87,137 +80,107 @@ Every case is self-contained at `.github/test-cases/docker-build-push/<case-name
 
 ```
 .github/test-cases/docker-build-push/
-  .gitkeep
   case-01-valid-setup/
-    Dockerfile           ← valid, builds successfully
-    docker-compose.yml   ← valid, has working healthcheck
-    test.sh              ← exits 0
-  case-02-bad-dockerfile/
-    Dockerfile           ← intentionally broken (syntax error, bad ENTRYPOINT, etc.)
-    docker-compose.yml   ← valid (copied from case-01)
-    test.sh              ← valid (copied from case-01)
-  case-03-missing-healthcheck/
-    Dockerfile           ← valid
-    docker-compose.yml   ← no healthcheck defined — compose --wait will timeout
-    test.sh              ← valid
-  case-04-test-script-fails/
-    Dockerfile           ← valid
-    docker-compose.yml   ← valid
-    test.sh              ← exits non-zero
-  case-05-malformed-image-name/
-    Dockerfile           ← valid
-    docker-compose.yml   ← valid
-    test.sh              ← valid
-    # image_name set to something un-pushable, e.g. "-badname" or "a" (too short)
-  case-06-image-name-wrong-scope/
-    Dockerfile           ← valid
-    docker-compose.yml   ← valid
-    test.sh              ← valid
-    # image_name set to a registry/path the token cannot write to,
-    # e.g. ghcr.io/some-other-org/an-image
-  case-07-missing-compose-file/
-    # No fixture files needed — compose path points to a non-existent file
-  case-08-branch-tag-rejects-sha/
-    Dockerfile           ← valid
-    docker-compose.yml   ← valid
-    test.sh              ← valid
-    # Triggered on a branch ref — push-branch-tag should be skipped (not fail)
+    docker-compose.yml   ← app (with dockerfile_inline) + test service
 ```
 
-**Self-contained (intentional duplication):** Each case is a complete, independent snapshot. No base images, no shared fixtures. This prevents a change to a "common" file from silently fixing or breaking multiple cases without that being obvious from a diff.
+**Self-contained (intentional duplication):** Each case is a complete, independent snapshot. No base images, no shared fixtures. A single `docker-compose.yml` with `dockerfile_inline` replaces the need for separate Dockerfile and test script files.
 
-**Image naming:** All test images are pushed to `ghcr.io/cusk-io/dot-github-test-docker-build-push-<case>`, e.g. `ghcr.io/cusk-io/dot-github-test-docker-build-push-case-01-valid-setup`. This keeps test images clearly segregated from production images in the `cusk-io` registry and prevents tag collision with other workflow test suites.
-
-**Context:** The reusable workflow is invoked with `context: .github/test-cases/docker-build-push/${{ matrix.case }}` so it builds the case's Dockerfile, not the repo root.
+**Image naming:** All test images are pushed to `ghcr.io/cusk-io/dot-github-test-docker-build-push-<case>`, e.g. `ghcr.io/cusk-io/dot-github-test-docker-build-push-case-01-valid-setup`. This keeps test images clearly segregated from production images in the `cusk-io` registry.
 
 ---
 
 ## 5. Case Definitions
 
-The `case` matrix job runs each case independently. Each case's `expected` value (`success` or `failure`) is stored in the matrix and available as `${{ matrix.expected }}` throughout the job. The final assertion step compares the job's actual outcome against `matrix.expected` and fails the overall run if they mismatch.
+Only case-01 is currently implemented. Cases 02–06 are pending an architecture review (see Section 7).
 
-| Case | Reusable workflow outcome | Expected (`matrix.expected`) | Rationale |
+| Case | Status | Reusable workflow outcome | Rationale |
 |---|---|---|---|
-| case-01-valid-setup | All jobs succeed; SHA tag pushed | `success` | Baseline sanity check |
-| case-02-bad-dockerfile | Build job fails | `failure` | Detects broken Dockerfile escapes |
-| case-03-missing-healthcheck | Test job fails (compose --wait times out) | `failure` | healthcheck is a required guard |
-| case-04-test-script-fails | Test job fails | `failure` | test_script exit code is respected |
-| case-05-malformed-image-name | Build or push fails (validation error) | `failure` | Rejects syntactically invalid names |
-| case-06-image-name-wrong-scope | Push fails (auth/permission error) | `failure` | Workflow handles wrong-scope gracefully |
-| case-07-missing-compose-file | Test job fails (file not found) | `failure` | compose_file validation works |
-| case-08-branch-tag-rejects-sha | push-branch-tag skipped; no error | `success` | Non-main-branch SHA-tag run does not push spurious tags |
+| case-01-valid-setup | ✅ Active | All jobs succeed; SHA tag pushed | Baseline sanity check |
+| case-02-bad-dockerfile | ❌ Discarded | Build job fails | Requires `continue-on-error` + output assertion pattern; revisit if needed |
+| case-03-missing-healthcheck | 🔁 Pending | Test job fails (compose run fails) | Service-based model — `app` no longer requires healthcheck; pending case definition |
+| case-04-test-script-fails | 🔁 Pending | Test job fails | Pending case definition |
+| case-05-image-name-wrong-scope | ❌ Discarded | Push fails (auth/permission error) | Not a realistic failure scenario |
+| case-06-missing-compose-file | 🔁 Pending | Test job fails (file not found) | Pending case definition |
 
 ---
 
 ## 6. Teardown Job
 
-The `teardown` job runs after all cases (`needs: [case]`), with `if: always()` so it fires even on cancellation or timeout. It deletes the specific test package versions it pushed to ghcr.io, deriving the case list directly from the matrix via `${{ toJSON(needs.case.outputs.cases) }}`:
+The `teardown` job uses `snok/container-retention-policy@v3` to delete all pushed test tags, preserving `buildcache-*` cache tags for subsequent builds:
 
 ```yaml
 teardown:
-  needs: [case]
+  needs: [case-01-valid-setup]
   if: always()
   runs-on: ubuntu-latest
-  permissions:
-    packages: write
+  strategy:
+    matrix:
+      include:
+        - image_name: dot-github-test-docker-build-push-case-01-valid-setup
   steps:
-    - name: Delete test images
-      env:
-        CASES: ${{ toJSON(needs.case.outputs.cases) }}
-      run: |
-        for case in $(echo '$CASES' | jq -r '.[]'); do
-          gh api \
-            --method DELETE \
-            "https://ghcr.io/v2/cusk-io/dot-github-test-docker-build-push-${case}/" \
-            --fail || true
-        done
+    - uses: snok/container-retention-policy@v3.0.0
+      with:
+        account: cusk-io
+        token: ${{ secrets.GHT_PAT_CONTAINER_RETENTION_POLICY }}
+        image-names: ${{ matrix.image_name }}
+        image-tags: "!latest !buildcache-*"
+        tag-selection: tagged
+        cut-off: 0s
+        keep-n-most-recent: 0
+        dry-run: false
 ```
 
-The `cases` output is a JSON array written by the `case` job. The teardown references it via `needs.case.outputs.cases` and uses `jq -r '.[]'` to iterate over elements in the shell.
-
 Key behaviors:
-- `|| true` ensures one failed deletion does not abort cleanup of remaining images.
-- `ghcr-cleaner.yml` already exists in this repo; this teardown is scoped only to the images this run created and does not replace or conflict with that workflow.
-- Package version deletion requires `package: delete` permission on the org-level `packages` scope; `packages: write` on the job token is sufficient.
+- `image-tags: "!latest !buildcache-*"` — negate both patterns; delete everything EXCEPT `latest` and `buildcache-*`. This preserves the `buildcache-<branch>` tags that subsequent builds will import from.
+- `tag-selection: tagged` — only tagged versions. Untagged/dangling images are handled separately by GHCR's own garbage collection.
+- `cut-off: 0s` / `keep-n-most-recent: 0` — no retention, delete everything matching immediately.
+- Uses `${{ secrets.GHT_PAT_CONTAINER_RETENTION_POLICY }}` (PAT), not `GITHUB_TOKEN`, because the retention policy action requires a PAT with `packages: write` scope for org-level package operations.
 
 ---
 
 ## 7. Design Decisions
 
-**Why parallel jobs?**  
-All eight cases are independent and self-contained. Running them in parallel keeps total wall-clock time near that of the slowest single case (~2 minutes). Sequential execution would multiply that by 8.
+**Why explicit jobs (not a matrix)?**
+GitHub Actions does not allow `uses:` at job level to coexist with `strategy: matrix:` — a job is either a reusable workflow call (`uses:`) or a regular job (`runs-on`/`steps`/`strategy:`), not both. Explicit named jobs is the correct pattern for case jobs. The teardown job is a regular `runs-on` job, so it uses a matrix freely.
 
-**Why self-contained cases with duplication?**  
-Shared base files would create hidden coupling — a change to a "base" Dockerfile could silently fix or break multiple cases without an obvious diff. Self-contained snapshots make each case's contract explicit.
+**Why self-contained cases with duplication?**
+Shared base files would create hidden coupling — a change to a "base" file could silently fix or break multiple cases without an obvious diff. Self-contained snapshots make each case's contract explicit.
 
-**Why test images are always pushed, even in failure cases?**  
-Some cases (02, 05, 06, 07) may fail before an image is pushed, but cases 01 and 08 will push one. Teardown cleans all images that were actually pushed. Cases that fail before push have nothing to clean.
+**Why multiple `--set` for cache sources?**
+Buildx interprets each `--set key=value` as a replacement. When the same key appears multiple times (e.g., `--set app.cache-from=source1 --set app.cache-from=source2`), buildx merges them into a list. Space-separated values in a single `--set` are treated as a literal string, not multiple sources. One `--set` per cache source is the correct pattern.
 
-**Why path-filtered `push` trigger instead of `workflow_call`?**  
-`workflow_call` is for when another workflow invokes this one. This test workflow is self-triggering — it runs on changes to the files it tests. The path filter ensures it only fires when relevant files change.
+**Why `docker buildx bake` with `dockerfile_inline`?**
+Buildx bake reads compose files natively and supports `dockerfile_inline` for single-file case fixtures. The compose-based approach is simpler and more maintainable than separate Dockerfile + script + action config.
 
-**Why `dot-github-test-` prefix on image names?**  
-The `cusk-io` org is where production images live. The `dot-github-test-` prefix keeps test images clearly distinguishable and filterable in the GitHub UI, and prevents accidental pushes to production tag names (the test workflow never pushes to a tag without this prefix).
+**Why `dot-github-test-` prefix on image names?**
+The `cusk-io` org is where production images live. The `dot-github-test-` prefix keeps test images clearly distinguishable in the GitHub UI and prevents accidental pushes to production tag names.
+
+**Why `image-tags: "!latest !buildcache-*"` in teardown?**
+`buildcache-*` tags are the registry cache source for subsequent builds. Deleting them would force a full rebuild every run. `latest` is the fallback cache source used by all branches — keeping it out of the delete scope is safer.
 
 ---
 
 ## 8. Extensibility
 
-Adding a new case requires changes in exactly one place — the `matrix.include` list in `test-docker-build-push.yml`:
+Adding a new case requires changes in three places:
 
-1. Create `.github/test-cases/docker-build-push/case-XX-<name>/` with the required fixture files.
-2. Add to `jobs.case.strategy.matrix.include`:
+1. Create `.github/test-cases/docker-build-push/case-XX-<name>/docker-compose.yml`.
+2. Add a new named job to `test-docker-build-push.yml`:
    ```yaml
-   - case: case-XX-<name>
-     expected: success  # or failure
+   case-02-some-new-case:
+     uses: ./.github/workflows/docker-build-push.yml
+     secrets: inherit
+     with:
+       image_name: ghcr.io/cusk-io/dot-github-test-docker-build-push-case-02-some-new-case
+       compose_file: ./.github/test-cases/docker-build-push/case-02-some-new-case/docker-compose.yml
    ```
-3. Remove `.gitkeep` from `docker-build-push/` if this is the first case.
-
-No other edits required. The teardown derives its case list from the matrix outputs automatically, and the path filter on the `push` trigger already covers any new case directory.
+3. Add the new case name to the teardown's `needs:` list.
+4. Add an entry to the teardown's `strategy.matrix.include`.
 
 Adding a test for a new workflow (e.g. `ghcr-cleaner`):
 
-1. Create `.github/workflows/test-ghcr-cleaner.yml` with its own `matrix.include` list.
+1. Create `.github/workflows/test-ghcr-cleaner.yml` with its own case jobs.
 2. Create `.github/test-cases/ghcr-cleaner/` and add cases.
 3. The two workflow-specific fixture directories coexist with no coordination needed.
 
@@ -236,12 +199,86 @@ Adding a test for a new workflow (e.g. `ghcr-cleaner`):
 
 ---
 
-## 10. Open Questions — Resolved
+## 10. Architecture — Implemented (Profiles Approach)
+
+The reusable workflow uses **Docker Compose profiles** to separate the build stage (`app` service) from the test stage (`test` service with `profiles: [test]`).
+
+### Compose file contract
+
+```yaml
+services:
+  app:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM alpine:3.19
+        ...
+    image: ${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}
+    # healthcheck optional — if present, test service can use:
+    #   depends_on:
+    #     app:
+    #       condition: service_healthy
+
+  test:
+    image: ${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}
+    profiles: [test]
+    # depends_on can include other test-profile services as needed
+```
+
+**`app` service:** Built by `docker buildx bake app` (or whatever `service_name` specifies). Never started by compose in the test stage. A healthcheck is optional — it only matters if `test` expresses a `service_healthy` dependency on `app`.
+
+**`test` service:** Has `profiles: [test]`. Has an `image:` key (not `build:`), so compose will pull it implicitly. Activated automatically by `docker compose run --rm test` — no explicit `--profile` flag needed.
+
+> **Note:** `service_name` (default `app`) controls what gets **built** by bake. The test service is always **`test`** (fixed name, with `profiles: [test]`). The compose file must therefore contain both a service matching `service_name` (with a `build:` block) and a service named `test`.
+
+**Variable defaults:** `${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}` enables local dev without pre-set env vars. Compose will re-interpolate nested defaults, so if `IMAGE` is unset, the fallback resolves to `{COMPOSE_PROJECT_NAME}-app:latest`.
+
+### Build stage (unchanged contract)
+
+```bash
+docker buildx bake --push \
+  --set app.cache-from=... \
+  --set app.cache-to=... \
+  --set app.tags=${IMAGE}:${SHA_TAG} \
+  --file compose.yml \
+  app
+```
+
+### Test stage (simplified)
+
+```bash
+docker compose -f compose.yml run --rm test
+```
+
+- `docker compose run` implicitly activates the `test` profile
+- `app` is never started, so no healthcheck is required on `app`
+- Compose implicitly pulls the `${IMAGE}:${TAG}` image if not cached locally
+- `docker compose down --volumes` cleans up any started services
+
+### Inputs
+
+| Input | Required | Default | Description |
+|---|---|---|---|
+| `image_name` | Yes | — | Full image name, e.g. `ghcr.io/cusk-io/my-app` |
+| `compose_file` | No | `docker-compose.yml` | Path to the compose file defining build and test services |
+| `service_name` | No | `app` | Docker compose service name to build (must have a `build:` block) |
+| `timeout_minutes` | No | `5` | Timeout for the test job in minutes |
+
+---
+
+## 11. Open Questions — Resolved
 
 | # | Question | Resolution |
 |---|---|---|
-| 1 | Case 05 scope | Split into `case-05-malformed-image-name` and `case-06-image-name-wrong-scope` |
-| 2 | Timeout per case | `timeout-minutes: 2`; adjustable per-case later |
-| 3 | Cleanup | Teardown job, `if: always()`, unconditionally deletes pushed test images |
-| 4 | Failure = gate? | Yes — a failing case causes the overall run to fail, acting as a release gate |
-| 5 | Image namespace | `ghcr.io/cusk-io/dot-github-test-docker-build-push-<case>` |
+| 1 | Build approach | `docker buildx bake` reads compose natively, `dockerfile_inline` replaces separate Dockerfile files |
+| 2 | Test execution | `docker compose run --rm test` — test service has `profiles: [test]`, auto-activated; app is never started |
+| 3 | Multiple cache-from | One `--set app.cache-from=...` per source, not space/comma/newline separated |
+| 4 | Teardown | `snok/container-retention-policy` with `image-tags: "!latest !buildcache-*"` preserves cache tags |
+| 5 | Jobs vs matrix | Explicit jobs required for `uses:` (reusable workflow call); matrix allowed on regular `runs-on` jobs |
+| 6 | Discarded cases | case-02 (bad-dockerfile), case-05 (wrong-scope) discarded |
+| 7 | Teardown matrix | Matrix works in teardown because it uses step-level `uses:` (action), not job-level `uses:` (reusable workflow call) |
+| 8 | App healthcheck | Optional — app is never started in test stage via compose; only needed if test expresses `service_healthy` dependency |
+| 9 | Local dev without env vars | `${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}` — nested substitution works in compose; `COMPOSE_PROJECT_NAME` auto-derived |
+| 10 | Test stage no longer needs `up --wait` | Removed — `docker compose run --rm test` activates `test` profile automatically |
+| 11 | `service_name` input | Kept — build targets `service_name` (default `app`) via `inputs.service_name` |
+| 12 | Test timeout | `timeout_minutes` input (default 5) passed through to `timeout-minutes` on test job |
