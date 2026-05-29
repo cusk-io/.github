@@ -31,7 +31,7 @@ jobs:
           account: cusk-io
           token: ${{ secrets.GHT_PAT_CONTAINER_RETENTION_POLICY }}
           image-names: dot-github-test-docker-build-push-case-01-valid-setup
-          image-tags: "!buildcache-*"
+          image-tags: "!latest !buildcache-*"
           tag-selection: tagged
           cut-off: 0s # everything
           keep-n-most-recent: 0
