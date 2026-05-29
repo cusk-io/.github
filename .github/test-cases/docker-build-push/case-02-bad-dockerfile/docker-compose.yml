@@ -1,0 +1,21 @@
+services:
+  app:
+    build:
+      dockerfile_inline: |
+        FROM alpine:3.19
+        RUNNN echo "this instruction is invalid"
+        CMD ["sleep", "infinity"]
+    image: ${IMAGE:?}:${TAG:?}
+    init: true
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 1s
+      timeout: 1s
+      retries: 1
+
+  test:
+    command: "true"
+    image: ${IMAGE:?}:${TAG:?}
+    depends_on:
+      app:
+        condition: service_healthy
