@@ -3,49 +3,36 @@ name: Test docker-build-push
 on:
   push:
     paths:
-      - '.github/workflows/docker-build-push.yml'
-      - '.github/workflows/test-docker-build-push.yml'
-      - '.github/test-cases/**'
+      - ".github/workflows/docker-build-push.yml"
+      - ".github/workflows/test-docker-build-push.yml"
+      - ".github/test-cases/docker-build-push/**"
   workflow_dispatch: {}
 
-jobs:
-  case:
-    strategy:
-      matrix:
-        include:
-          - case: case-01-valid-setup
-            expected: success
-    runs-on: ubuntu-latest
-    timeout-minutes: 2
-    secrets: inherit
-    steps:
-      - name: Run ${{ matrix.case }}
-        run: |
-          echo "::notice::Running case ${{ matrix.case }}, expecting ${{ matrix.expected }}"
-          echo "expected=${{ matrix.expected }}" >> $GITHUB_OUTPUT
-          echo "cases=${{ toJSON(matrix.include.*.case) }}" >> $GITHUB_OUTPUT
+permissions:
+  contents: read
+  packages: write
 
-      - name: Call reusable workflow
-        uses: ./.github/workflows/docker-build-push.yml
-        with:
-          image_name: ghcr.io/cusk-io/dot-github-test-docker-build-push-${{ matrix.case }}
-          test_script: ./.github/test-cases/docker-build-push/${{ matrix.case }}/test.sh
-          compose_file: ./.github/test-cases/docker-build-push/${{ matrix.case }}/docker-compose.yml
+jobs:
+  # Add new cases here and to the teardown needs: list.
+  case-01-valid-setup:
+    uses: ./.github/workflows/docker-build-push.yml
+    secrets: inherit
+    with:
+      image_name: ghcr.io/cusk-io/dot-github-test-docker-build-push-case-01-valid-setup
+      compose_file: ./.github/test-cases/docker-build-push/case-01-valid-setup/docker-compose.yml
 
   teardown:
-    needs: [case]
+    needs: [case-01-valid-setup]
     if: always()
     runs-on: ubuntu-latest
-    permissions:
-      packages: write
     steps:
-      - name: Delete test images
-        env:
-          CASES: ${{ toJSON(needs.case.outputs.cases) }}
-        run: |
-          for case in $(echo "$CASES" | jq -r '.[]'); do
-            gh api \
-              --method DELETE \
-              "https://ghcr.io/v2/cusk-io/dot-github-test-docker-build-push-${case}/" \
-              --fail || true
-          done
+      - uses: snok/container-retention-policy@v3.0.0
+        with:
+          account: cusk-io
+          token: ${{ secrets.GHT_PAT_CONTAINER_RETENTION_POLICY }}
+          image-names: dot-github-test-docker-build-push-case-01-valid-setup
+          image-tags: "!buildcache-*"
+          tag-selection: tagged
+          cut-off: 0s # everything
+          keep-n-most-recent: 0
+          dry-run: false
