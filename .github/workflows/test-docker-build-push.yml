@@ -17,6 +17,7 @@ jobs:
             expected: success
     runs-on: ubuntu-latest
     timeout-minutes: 2
+    secrets: inherit
     steps:
       - name: Run ${{ matrix.case }}
         run: |
@@ -30,7 +31,6 @@ jobs:
           image_name: ghcr.io/cusk-io/dot-github-test-docker-build-push-${{ matrix.case }}
           test_script: ./.github/test-cases/docker-build-push/${{ matrix.case }}/test.sh
           compose_file: ./.github/test-cases/docker-build-push/${{ matrix.case }}/docker-compose.yml
-        secrets: inherit
 
   teardown:
     needs: [case]
