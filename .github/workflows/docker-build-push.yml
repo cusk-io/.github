@@ -7,20 +7,16 @@ on:
         required: true
         type: string
         description: "Full image name, e.g. ghcr.io/cusk-io/my-app"
-      test_script:
-        required: true
-        type: string
-        description: "Shell script that runs tests after the service is healthy"
       compose_file:
         required: false
         type: string
         default: "docker-compose.yml"
-        description: "Path to the compose file"
+        description: "Path to the compose file defining build and test services"
       service_name:
         required: false
         type: string
         default: "app"
-        description: "Name of the docker compose service to start (must have a healthcheck)"
+        description: "Name of the docker compose service to build and wait for (must have a healthcheck)"
     outputs:
       test_passed:
         value: ${{ jobs.test.outputs.test_passed }}
@@ -54,45 +50,51 @@ jobs:
       - name: Determine cache tags
         id: cache-tags
         run: |
-          # Always include latest as a fallback
           CACHE_FROM="type=registry,ref=${{ env.IMAGE }}:latest"
 
-          # If the ref is a branch, add branch-specific cache sources
           if [[ "${{ github.ref_type }}" == "branch" ]]; then
             BRANCH="${{ github.ref_name }}"
-            # Prepend the final image of the branch (still useful for incremental builds)
-            CACHE_FROM="type=registry,ref=${{ env.IMAGE }}:branch-${BRANCH}"$'\n'"${CACHE_FROM}"
-            # Prepend (highest priorirty) full build cache from previous runs (richest source)
-            CACHE_FROM="type=registry,ref=${{ env.IMAGE }}:buildcache-${BRANCH}"$'\n'"${CACHE_FROM}"
-            # Push cache to the dedicated buildcache tag
+            CACHE_FROM="type=registry,ref=${{ env.IMAGE }}:branch-${BRANCH} ${CACHE_FROM}"
+            CACHE_FROM="type=registry,ref=${{ env.IMAGE }}:buildcache-${BRANCH} ${CACHE_FROM}"
             CACHE_TO="type=registry,ref=${{ env.IMAGE }}:buildcache-${BRANCH},mode=max"
           else
             CACHE_TO=""
           fi
 
-          # Write multiline outputs
           echo "cache_from<<EOF" >> $GITHUB_OUTPUT
           echo "$CACHE_FROM" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
           echo "cache_to=$CACHE_TO" >> $GITHUB_OUTPUT
 
-      - name: Build and push SHA-tagged image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ env.IMAGE }}:${{ steps.meta.outputs.sha_tag }}
-          platforms: linux/amd64
-          cache-from: ${{ steps.cache-tags.outputs.cache_from }}
-          cache-to: ${{ steps.cache-tags.outputs.cache_to }}
+      - name: Build and push
+        env:
+          TAG: ${{ steps.meta.outputs.sha_tag }}
+          CACHE_FROM: ${{ steps.cache-tags.outputs.cache_from }}
+          CACHE_TO: ${{ steps.cache-tags.outputs.cache_to }}
+        run: |
+          set -e
+          CACHE_FROM_SETS=""
+          for src in $CACHE_FROM; do
+            CACHE_FROM_SETS="$CACHE_FROM_SETS --set ${{ inputs.service_name }}.cache-from=$src"
+          done
+          docker buildx bake \
+            --push \
+            $CACHE_FROM_SETS \
+            --set "${{ inputs.service_name }}.cache-to=${CACHE_TO}" \
+            --set "${{ inputs.service_name }}.tags=${{ env.IMAGE }}:${TAG}" \
+            --file "${{ inputs.compose_file }}" \
+            "${{ inputs.service_name }}"
 
   test:
     needs: [build]
     runs-on: ubuntu-latest
     permissions:
       packages: read
+    env:
+      IMAGE: ${{ inputs.image_name }}
+      TAG: ${{ needs.build.outputs.sha_tag }}
     outputs:
-      test_passed: ${{ steps.tests.outcome == 'success' }}
+      test_passed: ${{ steps.run_tests.outcome == 'success' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -103,25 +105,16 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Start services
-        env:
-          IMAGE: ${{ env.IMAGE }}
-          TAG: ${{ needs.build.outputs.sha_tag }}
         run: |
-          docker compose -f ${{ inputs.compose_file }} up -d --wait --no-build ${{ inputs.service_name }}
+          docker compose -f "${{ inputs.compose_file }}" up -d --wait --no-build "${{ inputs.service_name }}"
 
       - name: Run tests
-        id: tests
-        env:
-          IMAGE: ${{ env.IMAGE }}
-          TAG: ${{ needs.build.outputs.sha_tag }}
-        run: ${{ inputs.test_script }}
+        id: run_tests
+        run: docker compose -f "${{ inputs.compose_file }}" run --rm test
 
       - name: Stop services
         if: always()
-        env:
-          IMAGE: ${{ env.IMAGE }}
-          TAG: ${{ needs.build.outputs.sha_tag }}
-        run: docker compose -f ${{ inputs.compose_file }} down --volumes
+        run: docker compose -f "${{ inputs.compose_file }}" down --volumes
 
   push-branch-tag:
     needs: [build, test]

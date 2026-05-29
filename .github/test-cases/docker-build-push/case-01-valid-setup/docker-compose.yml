@@ -1,5 +1,10 @@
 services:
   app:
+    build:
+      dockerfile_inline: |
+        FROM alpine:3.19
+        RUN echo "dude" > /dude.txt
+        CMD ["sleep", "infinity"]
     image: ${IMAGE:?}:${TAG:?}
     init: true
     healthcheck:
@@ -7,3 +12,10 @@ services:
       interval: 1s
       timeout: 1s
       retries: 1
+
+  test:
+    command: "true"
+    image: ${IMAGE:?}:${TAG:?}
+    depends_on:
+      app:
+        condition: service_healthy
