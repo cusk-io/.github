@@ -68,12 +68,12 @@ jobs:
             expected: success
     runs-on: ubuntu-latest
     timeout-minutes: 2
-    outputs:
-      expected: ${{ matrix.expected }}
     steps:
       - name: Run ${{ matrix.case }}
         run: |
           echo "::notice::Running case ${{ matrix.case }}, expecting ${{ matrix.expected }}"
+          echo "expected=${{ matrix.expected }}" >> $GITHUB_OUTPUT
+          echo "cases=${{ toJSON(matrix.include.*.case) }}" >> $GITHUB_OUTPUT
 
   teardown:
     needs: [case]
@@ -134,28 +134,28 @@ Every case is self-contained at `.github/test-cases/docker-build-push/<case-name
 
 ## 5. Case Definitions
 
-| Case | Reusable workflow outcome | Expected overall job result | Rationale |
-|---|---|---|---|
-| 01-valid-setup | All jobs succeed; SHA tag pushed | **Success** | Baseline sanity check |
-| 02-bad-dockerfile | Build job fails | **Failure** | Detects broken Dockerfile escapes |
-| 03-missing-healthcheck | Test job fails (compose --wait times out) | **Failure** | healthcheck is a required guard |
-| 04-test-script-fails | Test job fails | **Failure** | test_script exit code is respected |
-| 05-malformed-image-name | Build or push fails (validation error) | **Failure** | Rejects syntactically invalid names |
-| 06-image-name-wrong-scope | Push fails (auth/permission error) | **Failure** | Workflow handles wrong-scope gracefully |
-| 07-missing-compose-file | Test job fails (file not found) | **Failure** | compose_file validation works |
-| 08-branch-tag-rejects-sha | push-branch-tag skipped; no error | **Success** | Non-main-branch SHA-tag run does not push spurious tags |
+The `case` matrix job runs each case independently. Each case's `expected` value (`success` or `failure`) is stored in the matrix and available as `${{ matrix.expected }}` throughout the job. The final assertion step compares the job's actual outcome against `matrix.expected` and fails the overall run if they mismatch.
 
-**Timeout:** All case jobs have `timeout-minutes: 2`. This is well above what a locally-succeeding build/test/cleanup cycle should need (~30–60s in the common case) while catching hung compose waits or infinite build loops promptly. Individual cases can override this later if needed.
+| Case | Reusable workflow outcome | Expected (`matrix.expected`) | Rationale |
+|---|---|---|---|
+| case-01-valid-setup | All jobs succeed; SHA tag pushed | `success` | Baseline sanity check |
+| case-02-bad-dockerfile | Build job fails | `failure` | Detects broken Dockerfile escapes |
+| case-03-missing-healthcheck | Test job fails (compose --wait times out) | `failure` | healthcheck is a required guard |
+| case-04-test-script-fails | Test job fails | `failure` | test_script exit code is respected |
+| case-05-malformed-image-name | Build or push fails (validation error) | `failure` | Rejects syntactically invalid names |
+| case-06-image-name-wrong-scope | Push fails (auth/permission error) | `failure` | Workflow handles wrong-scope gracefully |
+| case-07-missing-compose-file | Test job fails (file not found) | `failure` | compose_file validation works |
+| case-08-branch-tag-rejects-sha | push-branch-tag skipped; no error | `success` | Non-main-branch SHA-tag run does not push spurious tags |
 
 ---
 
 ## 6. Teardown Job
 
-The `teardown` job runs after all cases (via `needs:`), with `if: always()` so it fires even on cancellation or timeout. It deletes the specific test package versions it pushed to ghcr.io:
+The `teardown` job runs after all cases (`needs: [case]`), with `if: always()` so it fires even on cancellation or timeout. It deletes the specific test package versions it pushed to ghcr.io, deriving the case list directly from the matrix via `${{ toJSON(needs.case.outputs.cases) }}`:
 
 ```yaml
 teardown:
-  needs: [case-01-valid-setup, ..., case-08-branch-tag-rejects-sha]
+  needs: [case]
   if: always()
   runs-on: ubuntu-latest
   permissions:
@@ -163,18 +163,17 @@ teardown:
   steps:
     - name: Delete test images
       env:
-        CASES: case-01-valid-setup case-02-bad-dockerfile case-03-missing-healthcheck \
-               case-04-test-script-fails case-05-malformed-image-name \
-               case-06-image-name-wrong-scope case-07-missing-compose-file \
-               case-08-branch-tag-rejects-sha
+        CASES: ${{ toJSON(needs.case.outputs.cases) }}
       run: |
-        for case in $CASES; do
+        for case in $(echo '$CASES' | jq -r '.[]'); do
           gh api \
             --method DELETE \
-            "https://ghcr.io/v2/cusk-io/dot-github-test-docker-build-push-${case}/ \
+            "https://ghcr.io/v2/cusk-io/dot-github-test-docker-build-push-${case}/" \
             --fail || true
         done
 ```
+
+The `cases` output is a JSON array written by the `case` job. The teardown references it via `needs.case.outputs.cases` and uses `jq -r '.[]'` to iterate over elements in the shell.
 
 Key behaviors:
 - `|| true` ensures one failed deletion does not abort cleanup of remaining images.
@@ -204,22 +203,23 @@ The `cusk-io` org is where production images live. The `dot-github-test-` prefix
 
 ## 8. Extensibility
 
-Adding a new case:
+Adding a new case requires changes in exactly one place — the `matrix.include` list in `test-docker-build-push.yml`:
 
 1. Create `.github/test-cases/docker-build-push/case-XX-<name>/` with the required fixture files.
-2. Remove `.gitkeep` from `docker-build-push/` (if this is the first case).
-3. Add `case-XX-<name>:` to the `needs:` list of the `teardown` job.
-4. Add the `case-XX-<name>:` job block to `test-docker-build-push.yml`.
-5. Add the case name to the `CASES` env var in the teardown job.
-6. Commit. The next run (manual or on push) includes the new case.
+2. Add to `jobs.case.strategy.matrix.include`:
+   ```yaml
+   - case: case-XX-<name>
+     expected: success  # or failure
+   ```
+3. Remove `.gitkeep` from `docker-build-push/` if this is the first case.
 
-No fixture framework, no script generation, no dynamic configuration — plain YAML and plain files. Auditable, disableable, and understandable at a glance.
+No other edits required. The teardown derives its case list from the matrix outputs automatically, and the path filter on the `push` trigger already covers any new case directory.
 
 Adding a test for a new workflow (e.g. `ghcr-cleaner`):
 
-1. Create `.github/workflows/test-ghcr-cleaner.yml`.
+1. Create `.github/workflows/test-ghcr-cleaner.yml` with its own `matrix.include` list.
 2. Create `.github/test-cases/ghcr-cleaner/` and add cases.
-3. The `test-cases/` directory now has two workflow-specific subdirectories with no coordination needed.
+3. The two workflow-specific fixture directories coexist with no coordination needed.
 
 ---
 
