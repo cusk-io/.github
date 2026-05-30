@@ -224,11 +224,11 @@ services:
     # profiles: [test]  # optional; only useful if test should be excluded from `docker compose up` by default
 ```
 
-**`app` service:** Built by `docker buildx bake app` (or whatever `service_name` specifies). Never started by compose in the test stage. A healthcheck is optional — it only matters if `test` expresses a `service_healthy` dependency on `app`.
+**`app` service:** Built by `docker buildx bake` targeting `build_service_name` (default `app`). Never started by compose in the test stage. A healthcheck is optional — it only matters if `test` expresses a `service_healthy` dependency on `app`.
 
-**`test` service:** Must be named `test`. Has an `image:` key (not `build:`), so compose will pull it implicitly. `profiles: [test]` is supported but not required — `docker compose run --rm test` explicitly names the service and does not filter by profile.
+**`test` service:** Must match `test_service_name` (default `test`). Has an `image:` key (not `build:`), so compose will pull it implicitly. `profiles: [test]` is supported but not required.
 
-> **Note:** `service_name` (default `app`) controls what gets **built** by bake. The test service is always **`test`** (fixed name). The compose file must contain both a service matching `service_name` (with a `build:` block) and a service named `test`.
+> **Note:** `build_service_name` (default `app`) controls what gets **built** by bake. `test_service_name` (default `test`) controls what gets **run** by compose. The compose file must contain both a service matching `build_service_name` (with a `build:` block) and a service matching `test_service_name`.
 
 **Variable defaults:** `${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}` enables local dev without pre-set env vars. Compose will re-interpolate nested defaults, so if `IMAGE` is unset, the fallback resolves to `{COMPOSE_PROJECT_NAME}-app:latest`.
 
@@ -243,13 +243,13 @@ docker buildx bake --push \
   app
 ```
 
-### Test stage (simplified)
+### Test stage
 
 ```bash
 docker compose -f compose.yml run --rm test
 ```
 
-- `docker compose run --rm test` explicitly targets the `test` service by name
+- `docker compose run --rm test` explicitly targets the test service by name
 - `app` is never started in the test stage, so no healthcheck is required on `app`
 - Compose implicitly pulls the `${IMAGE}:${TAG}` image if not cached locally
 - Compose implicitly pulls the `${IMAGE}:${TAG}` image if not cached locally
@@ -261,7 +261,8 @@ docker compose -f compose.yml run --rm test
 |---|---|---|---|
 | `image_name` | Yes | — | Full image name, e.g. `ghcr.io/cusk-io/my-app` |
 | `compose_file` | No | `docker-compose.yml` | Path to the compose file defining build and test services |
-| `service_name` | No | `app` | Docker compose service name to build (must have a `build:` block) |
+| `build_service_name` | No | `app` | Docker compose service name to build (must have a `build:` block) |
+| `test_service_name` | No | `test` | Docker compose service name to run during test stage |
 | `timeout_minutes` | No | `5` | Timeout for the test job in minutes |
 
 ---
@@ -280,5 +281,6 @@ docker compose -f compose.yml run --rm test
 | 8 | App healthcheck | Optional — app is never started in test stage via compose; only needed if test expresses `service_healthy` dependency |
 | 9 | Local dev without env vars | `${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}` — nested substitution works in compose; `COMPOSE_PROJECT_NAME` auto-derived |
 | 10 | Test stage no longer needs `up --wait` | Removed — `docker compose run --rm test` activates `test` profile automatically |
-| 11 | `service_name` input | Kept — build targets `service_name` (default `app`) via `inputs.service_name` |
+| 11 | `service_name` input | Split into `build_service_name` (default `app`) and `test_service_name` (default `test`) |
 | 12 | Test timeout | `timeout_minutes` input (default 5) passed through to `timeout-minutes` on test job |
+| 13 | Compose file local dev | `${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}` enables local run without pre-set env vars; nested substitution works |
