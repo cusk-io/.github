@@ -221,15 +221,14 @@ services:
 
   test:
     image: ${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}
-    profiles: [test]
-    # depends_on can include other test-profile services as needed
+    # profiles: [test]  # optional; only useful if test should be excluded from `docker compose up` by default
 ```
 
 **`app` service:** Built by `docker buildx bake app` (or whatever `service_name` specifies). Never started by compose in the test stage. A healthcheck is optional — it only matters if `test` expresses a `service_healthy` dependency on `app`.
 
-**`test` service:** Has `profiles: [test]`. Has an `image:` key (not `build:`), so compose will pull it implicitly. Activated automatically by `docker compose run --rm test` — no explicit `--profile` flag needed.
+**`test` service:** Must be named `test`. Has an `image:` key (not `build:`), so compose will pull it implicitly. `profiles: [test]` is supported but not required — `docker compose run --rm test` explicitly names the service and does not filter by profile.
 
-> **Note:** `service_name` (default `app`) controls what gets **built** by bake. The test service is always **`test`** (fixed name, with `profiles: [test]`). The compose file must therefore contain both a service matching `service_name` (with a `build:` block) and a service named `test`.
+> **Note:** `service_name` (default `app`) controls what gets **built** by bake. The test service is always **`test`** (fixed name). The compose file must contain both a service matching `service_name` (with a `build:` block) and a service named `test`.
 
 **Variable defaults:** `${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}` enables local dev without pre-set env vars. Compose will re-interpolate nested defaults, so if `IMAGE` is unset, the fallback resolves to `{COMPOSE_PROJECT_NAME}-app:latest`.
 
@@ -250,8 +249,9 @@ docker buildx bake --push \
 docker compose -f compose.yml run --rm test
 ```
 
-- `docker compose run` implicitly activates the `test` profile
-- `app` is never started, so no healthcheck is required on `app`
+- `docker compose run --rm test` explicitly targets the `test` service by name
+- `app` is never started in the test stage, so no healthcheck is required on `app`
+- Compose implicitly pulls the `${IMAGE}:${TAG}` image if not cached locally
 - Compose implicitly pulls the `${IMAGE}:${TAG}` image if not cached locally
 - `docker compose down --volumes` cleans up any started services
 
