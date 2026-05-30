@@ -98,7 +98,7 @@ Only case-01 is currently implemented. Cases 02–06 are pending an architecture
 |---|---|---|---|
 | case-01-valid-setup | ✅ Active | All jobs succeed; SHA tag pushed | Baseline sanity check |
 | case-02-bad-dockerfile | ❌ Discarded | Build job fails | Requires `continue-on-error` + output assertion pattern; revisit if needed |
-| case-03-missing-healthcheck | 🔁 Pending | Test job fails (compose run fails) | Service-based model — `app` no longer needs healthcheck; pending case definition |
+| case-03-missing-healthcheck | 🔁 Pending | Test job fails (compose run fails) | Service-based model — `app` no longer requires healthcheck; pending case definition |
 | case-04-test-script-fails | 🔁 Pending | Test job fails | Pending case definition |
 | case-05-image-name-wrong-scope | ❌ Discarded | Push fails (auth/permission error) | Not a realistic failure scenario |
 | case-06-missing-compose-file | 🔁 Pending | Test job fails (file not found) | Pending case definition |
@@ -225,9 +225,11 @@ services:
     # depends_on can include other test-profile services as needed
 ```
 
-**`app` service:** Built by `docker buildx bake app`. Never started by compose in the test stage. A healthcheck is optional — it only matters if `test` expresses a `service_healthy` dependency on `app`.
+**`app` service:** Built by `docker buildx bake app` (or whatever `service_name` specifies). Never started by compose in the test stage. A healthcheck is optional — it only matters if `test` expresses a `service_healthy` dependency on `app`.
 
 **`test` service:** Has `profiles: [test]`. Has an `image:` key (not `build:`), so compose will pull it implicitly. Activated automatically by `docker compose run --rm test` — no explicit `--profile` flag needed.
+
+> **Note:** `service_name` (default `app`) controls what gets **built** by bake. The test service is always **`test`** (fixed name, with `profiles: [test]`). The compose file must therefore contain both a service matching `service_name` (with a `build:` block) and a service named `test`.
 
 **Variable defaults:** `${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}` enables local dev without pre-set env vars. Compose will re-interpolate nested defaults, so if `IMAGE` is unset, the fallback resolves to `{COMPOSE_PROJECT_NAME}-app:latest`.
 
@@ -259,6 +261,8 @@ docker compose -f compose.yml run --rm test
 |---|---|---|---|
 | `image_name` | Yes | — | Full image name, e.g. `ghcr.io/cusk-io/my-app` |
 | `compose_file` | No | `docker-compose.yml` | Path to the compose file defining build and test services |
+| `service_name` | No | `app` | Docker compose service name to build (must have a `build:` block) |
+| `timeout_minutes` | No | `5` | Timeout for the test job in minutes |
 
 ---
 
@@ -276,5 +280,5 @@ docker compose -f compose.yml run --rm test
 | 8 | App healthcheck | Optional — app is never started in test stage via compose; only needed if test expresses `service_healthy` dependency |
 | 9 | Local dev without env vars | `${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}` — nested substitution works in compose; `COMPOSE_PROJECT_NAME` auto-derived |
 | 10 | Test stage no longer needs `up --wait` | Removed — `docker compose run --rm test` activates `test` profile automatically |
-| 11 | `service_name` input | Removed — build always targets `app`, test always targets `test` |
-| 12 | Test timeout | `timeout-minutes: 10` on test job as a safety guard |
+| 11 | `service_name` input | Kept — build targets `service_name` (default `app`) via `inputs.service_name` |
+| 12 | Test timeout | `timeout_minutes` input (default 5) passed through to `timeout-minutes` on test job |

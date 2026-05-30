@@ -17,6 +17,11 @@ on:
         type: string
         default: "app"
         description: "Name of the docker compose service to build and wait for (must have a healthcheck)"
+      timeout_minutes:
+        required: false
+        type: number
+        default: 5
+        description: "Timeout for the test job in minutes"
     outputs:
       test_passed:
         value: ${{ jobs.test.outputs.test_passed }}
@@ -88,7 +93,7 @@ jobs:
   test:
     needs: [build]
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: ${{ inputs.timeout_minutes }}
     permissions:
       packages: read
     env:
