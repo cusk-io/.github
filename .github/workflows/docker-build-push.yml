@@ -88,6 +88,7 @@ jobs:
   test:
     needs: [build]
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       packages: read
     env:
@@ -103,10 +104,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Start services
-        run: |
-          docker compose -f "${{ inputs.compose_file }}" up -d --wait --no-build "${{ inputs.service_name }}"
 
       - name: Run tests
         id: run_tests

@@ -98,10 +98,10 @@ Only case-01 is currently implemented. Cases 02–06 are pending an architecture
 |---|---|---|---|
 | case-01-valid-setup | ✅ Active | All jobs succeed; SHA tag pushed | Baseline sanity check |
 | case-02-bad-dockerfile | ❌ Discarded | Build job fails | Requires `continue-on-error` + output assertion pattern; revisit if needed |
-| case-03-missing-healthcheck | 🔁 Pending | Test job fails (compose --wait times out) | Service-based model; see Section 7 |
-| case-04-test-script-fails | 🔁 Pending | Test job fails | Service-based model; see Section 7 |
+| case-03-missing-healthcheck | 🔁 Pending | Test job fails (compose run fails) | Service-based model — `app` no longer needs healthcheck; pending case definition |
+| case-04-test-script-fails | 🔁 Pending | Test job fails | Pending case definition |
 | case-05-image-name-wrong-scope | ❌ Discarded | Push fails (auth/permission error) | Not a realistic failure scenario |
-| case-06-missing-compose-file | 🔁 Pending | Test job fails (file not found) | Service-based model; see Section 7 |
+| case-06-missing-compose-file | 🔁 Pending | Test job fails (file not found) | Pending case definition |
 
 ---
 
@@ -199,19 +199,66 @@ Adding a test for a new workflow (e.g. `ghcr-cleaner`):
 
 ---
 
-## 10. Open Questions — Pending Architecture Review
+## 10. Architecture — Implemented (Profiles Approach)
 
-The current `docker-build-push.yml` reusable workflow uses `docker compose --wait` with `service_healthy` to test images. This pattern requires a long-running container with a healthcheck, which is unsuitable for short-lived tool images (e.g. a Go binary in a distroless container).
+The reusable workflow uses **Docker Compose profiles** to separate the build stage (`app` service) from the test stage (`test` service with `profiles: [test]`).
 
-**Planned architecture change:** Replace the `compose_file`-based test pattern with a `test_script` input — a user-provided shell script that runs after the image is built and pushed. The script can `docker run` the image as a one-off command, as a long-running service with healthcheck, or not at all. This decouples the test contract from the container's runtime behavior.
+### Compose file contract
 
-Once the architecture is updated:
+```yaml
+services:
+  app:
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM alpine:3.19
+        ...
+    image: ${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}
+    # healthcheck optional — if present, test service can use:
+    #   depends_on:
+    #     app:
+    #       condition: service_healthy
 
-| Case | Status on hold | New approach |
-|---|---|---|
-| case-03-missing-healthcheck | 🔁 Pending | `test_script` that runs the image without a healthcheck, asserting the image is runnable |
-| case-04-test-script-fails | 🔁 Pending | `test_script` that exits non-zero, asserting `test_passed: false` is propagated |
-| case-06-missing-compose-file | 🔁 Pending | Irrelevant — `test_script` replaces `compose_file` |
+  test:
+    image: ${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}
+    profiles: [test]
+    # depends_on can include other test-profile services as needed
+```
+
+**`app` service:** Built by `docker buildx bake app`. Never started by compose in the test stage. A healthcheck is optional — it only matters if `test` expresses a `service_healthy` dependency on `app`.
+
+**`test` service:** Has `profiles: [test]`. Has an `image:` key (not `build:`), so compose will pull it implicitly. Activated automatically by `docker compose run --rm test` — no explicit `--profile` flag needed.
+
+**Variable defaults:** `${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}` enables local dev without pre-set env vars. Compose will re-interpolate nested defaults, so if `IMAGE` is unset, the fallback resolves to `{COMPOSE_PROJECT_NAME}-app:latest`.
+
+### Build stage (unchanged contract)
+
+```bash
+docker buildx bake --push \
+  --set app.cache-from=... \
+  --set app.cache-to=... \
+  --set app.tags=${IMAGE}:${SHA_TAG} \
+  --file compose.yml \
+  app
+```
+
+### Test stage (simplified)
+
+```bash
+docker compose -f compose.yml run --rm test
+```
+
+- `docker compose run` implicitly activates the `test` profile
+- `app` is never started, so no healthcheck is required on `app`
+- Compose implicitly pulls the `${IMAGE}:${TAG}` image if not cached locally
+- `docker compose down --volumes` cleans up any started services
+
+### Inputs
+
+| Input | Required | Default | Description |
+|---|---|---|---|
+| `image_name` | Yes | — | Full image name, e.g. `ghcr.io/cusk-io/my-app` |
+| `compose_file` | No | `docker-compose.yml` | Path to the compose file defining build and test services |
 
 ---
 
@@ -220,9 +267,14 @@ Once the architecture is updated:
 | # | Question | Resolution |
 |---|---|---|
 | 1 | Build approach | `docker buildx bake` reads compose natively, `dockerfile_inline` replaces separate Dockerfile files |
-| 2 | Test execution | `docker compose run --rm test` — test service defined in compose, exit code propagated |
+| 2 | Test execution | `docker compose run --rm test` — test service has `profiles: [test]`, auto-activated; app is never started |
 | 3 | Multiple cache-from | One `--set app.cache-from=...` per source, not space/comma/newline separated |
 | 4 | Teardown | `snok/container-retention-policy` with `image-tags: "!latest !buildcache-*"` preserves cache tags |
 | 5 | Jobs vs matrix | Explicit jobs required for `uses:` (reusable workflow call); matrix allowed on regular `runs-on` jobs |
 | 6 | Discarded cases | case-02 (bad-dockerfile), case-05 (wrong-scope) discarded |
 | 7 | Teardown matrix | Matrix works in teardown because it uses step-level `uses:` (action), not job-level `uses:` (reusable workflow call) |
+| 8 | App healthcheck | Optional — app is never started in test stage via compose; only needed if test expresses `service_healthy` dependency |
+| 9 | Local dev without env vars | `${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}` — nested substitution works in compose; `COMPOSE_PROJECT_NAME` auto-derived |
+| 10 | Test stage no longer needs `up --wait` | Removed — `docker compose run --rm test` activates `test` profile automatically |
+| 11 | `service_name` input | Removed — build always targets `app`, test always targets `test` |
+| 12 | Test timeout | `timeout-minutes: 10` on test job as a safety guard |

@@ -5,7 +5,7 @@ services:
         FROM alpine:3.19
         RUN echo "dude" > /dude.txt
         CMD ["sleep", "infinity"]
-    image: ${IMAGE:?}:${TAG:?}
+    image: ${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}
     init: true
     healthcheck:
       test: ["CMD", "true"]
@@ -14,8 +14,9 @@ services:
       retries: 1
 
   test:
+    profiles: [test]
     command: "true"
-    image: ${IMAGE:?}:${TAG:?}
+    image: ${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}
     depends_on:
       app:
         condition: service_healthy
