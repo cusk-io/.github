@@ -16,7 +16,7 @@ on:
         required: false
         type: string
         default: "app"
-        description: "Name of the docker compose service to build and wait for (must have a healthcheck)"
+        description: "Docker compose service name to build (must have a build: block)"
       timeout_minutes:
         required: false
         type: number
@@ -100,7 +100,7 @@ jobs:
       IMAGE: ${{ inputs.image_name }}
       TAG: ${{ needs.build.outputs.sha_tag }}
     outputs:
-      test_passed: ${{ steps.run_tests.outcome == 'success' }}
+      test_passed: ${{ steps.docker_compose_run_test.outcome == 'success' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -110,8 +110,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run tests
-        id: run_tests
+      - name: Run docker compose 'test' service
+        id: docker_compose_run_test
         run: docker compose -f "${{ inputs.compose_file }}" run --rm test
 
       - name: Stop services
