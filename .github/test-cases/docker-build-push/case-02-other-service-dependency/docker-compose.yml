@@ -1,0 +1,41 @@
+services:
+  app:
+    build:
+      dockerfile_inline: |
+        FROM alpine:3.19
+        RUN echo "dude" > /dude.txt
+        CMD ["sleep", "infinity"]
+    image: ${IMAGE:-${COMPOSE_PROJECT_NAME}-app}:${TAG:-latest}
+    init: true
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 1s
+      timeout: 1s
+      retries: 1
+
+  test:
+    #profiles: [test]
+    extends: app
+    command: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 6379
+    networks:
+      - dbnet
+
+  db:
+    #profiles: [test]
+    image: redis:7-alpine
+    networks:
+      - dbnet
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+networks:
+  dbnet: {}
