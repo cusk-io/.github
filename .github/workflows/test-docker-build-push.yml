@@ -21,14 +21,23 @@ jobs:
       image_name: ghcr.io/cusk-io/dot-github-test-docker-build-push-case-01-valid-setup
       compose_file: ./.github/test-cases/docker-build-push/case-01-valid-setup/docker-compose.yml
 
+  case-02-other-service-dependency:
+    uses: ./.github/workflows/docker-build-push.yml
+    secrets: inherit
+    with:
+      image_name: ghcr.io/cusk-io/dot-github-test-docker-build-push-case-02-other-service-dependency
+      compose_file: ./.github/test-cases/docker-build-push/case-02-other-service-dependency/docker-compose.yml
+      timeout_minutes: 10
+
   teardown:
-    needs: [case-01-valid-setup]
+    needs: [case-01-valid-setup, case-02-other-service-dependency]
     if: always()
     runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
           - image_name: dot-github-test-docker-build-push-case-01-valid-setup
+          - image_name: dot-github-test-docker-build-push-case-02-other-service-dependency
     steps:
       - uses: snok/container-retention-policy@v3.0.0
         with:
