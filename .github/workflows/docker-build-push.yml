@@ -12,11 +12,16 @@ on:
         type: string
         default: "docker-compose.yml"
         description: "Path to the compose file defining build and test services"
-      service_name:
+      build_service_name:
         required: false
         type: string
         default: "app"
         description: "Docker compose service name to build (must have a build: block)"
+      test_service_name:
+        required: false
+        type: string
+        default: "test"
+        description: "Docker compose service name to run during test stage"
       timeout_minutes:
         required: false
         type: number
@@ -80,15 +85,15 @@ jobs:
           set -e
           CACHE_FROM_SETS=""
           for src in $CACHE_FROM; do
-            CACHE_FROM_SETS="$CACHE_FROM_SETS --set ${{ inputs.service_name }}.cache-from=$src"
+            CACHE_FROM_SETS="$CACHE_FROM_SETS --set ${{ inputs.build_service_name }}.cache-from=$src"
           done
           docker buildx bake \
             --push \
             $CACHE_FROM_SETS \
-            --set "${{ inputs.service_name }}.cache-to=${CACHE_TO}" \
-            --set "${{ inputs.service_name }}.tags=${{ env.IMAGE }}:${TAG}" \
+            --set "${{ inputs.build_service_name }}.cache-to=${CACHE_TO}" \
+            --set "${{ inputs.build_service_name }}.tags=${{ env.IMAGE }}:${TAG}" \
             --file "${{ inputs.compose_file }}" \
-            "${{ inputs.service_name }}"
+            "${{ inputs.build_service_name }}"
 
   test:
     needs: [build]
@@ -112,7 +117,7 @@ jobs:
 
       - name: Run docker compose 'test' service
         id: docker_compose_run_test
-        run: docker compose -f "${{ inputs.compose_file }}" run --rm test
+        run: docker compose -f "${{ inputs.compose_file }}" run --rm ${{ inputs.test_service_name }}
 
       - name: Stop services
         if: always()

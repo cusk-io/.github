@@ -1,5 +1,5 @@
 services:
-  app:
+  myapp:
     build:
       dockerfile_inline: |
         FROM alpine:3.19
@@ -13,9 +13,8 @@ services:
       timeout: 1s
       retries: 1
 
-  test:
-    #profiles: [test]
-    extends: app
+  mytest: # instead of standard "test"
+    extends: myapp
     command: "true"
     depends_on:
       db:
@@ -27,7 +26,6 @@ services:
       - dbnet
 
   db:
-    #profiles: [test]
     image: redis:7-alpine
     networks:
       - dbnet

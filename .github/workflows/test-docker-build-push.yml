@@ -27,6 +27,8 @@ jobs:
     with:
       image_name: ghcr.io/cusk-io/dot-github-test-docker-build-push-case-02-other-service-dependency
       compose_file: ./.github/test-cases/docker-build-push/case-02-other-service-dependency/docker-compose.yml
+      build_service_name: myapp
+      test_service_name: mytest
       timeout_minutes: 10
 
   teardown:
