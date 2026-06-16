@@ -2,8 +2,8 @@ name: GHCR Cleaner
 
 on:
   workflow_dispatch:
-  #schedule:
-  #  - cron: "0 7 * * *" # Run daily 7am UTC
+  schedule:
+    - cron: "0 7 * * *" # Run daily 7am UTC
 
 jobs:
   cleanup-sha-tags:
@@ -35,4 +35,4 @@ jobs:
           skip-tags: "latest,buildcache-*,branch-*,[0-9]*"
 
           # set to false after verifying planned deletions in github action log output
-          dry-run: true
+          dry-run: false
