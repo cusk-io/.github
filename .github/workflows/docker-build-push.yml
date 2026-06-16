@@ -141,7 +141,7 @@ jobs:
       - name: Pull and push branch tag
         env:
           SHA_TAG: ${{ needs.build.outputs.sha_tag }}
-          BRANCH_TAG: ${{ github.ref_name == 'main' || github.ref_name == 'master' && 'latest' || format('branch-%s', github.ref_name) }}
+          BRANCH_TAG: ${{ (github.ref_name == 'main' || github.ref_name == 'master') && 'latest' || format('branch-%s', github.ref_name) }}
         run: |
           echo "Tagging with branch tag ${BRANCH_TAG}"
           docker pull ${{ env.IMAGE }}:${SHA_TAG}
