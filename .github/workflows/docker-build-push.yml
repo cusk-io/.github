@@ -141,15 +141,11 @@ jobs:
       - name: Pull and push branch tag
         env:
           SHA_TAG: ${{ needs.build.outputs.sha_tag }}
-          BRANCH: ${{ github.ref_name }}
+          BRANCH_TAG: ${{ github.ref_name == 'main' || github.ref_name == 'master' && 'latest' || 'branch-' + github.ref_name }}
         run: |
           docker pull ${{ env.IMAGE }}:${SHA_TAG}
-          docker tag ${{ env.IMAGE }}:${SHA_TAG} ${{ env.IMAGE }}:branch-${BRANCH}
-          docker push ${{ env.IMAGE }}:branch-${BRANCH}
-          if [[ "${BRANCH}" == "main" || "${BRANCH}" == "master" ]]; then
-            docker tag ${{ env.IMAGE }}:${SHA_TAG} ${{ env.IMAGE }}:latest
-            docker push ${{ env.IMAGE }}:latest
-          fi
+          docker tag ${{ env.IMAGE }}:${SHA_TAG} ${{ env.IMAGE }}:${BRANCH_TAG}
+          docker push ${{ env.IMAGE }}:${BRANCH_TAG}
 
   push-version-tags:
     needs: [build, test]
