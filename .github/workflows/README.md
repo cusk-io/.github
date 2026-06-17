@@ -1,4 +1,23 @@
-# Workflow files
+# Workflows
+
+This directory contains reusable workflows (triggered via `workflow_call`) and their self-tests.
+
+## Importing
+
+From an external repo:
+
+```yaml
+jobs:
+  my-job:
+    uses: cusk/dot-github/.github/workflows/<workflow>.yml@<version>
+    secrets: inherit
+```
+
+Replace `<version>` with a tag, branch, or SHA — e.g. `@main` or `@v1`.
+
+## Reusable Workflows
+
+### docker-build-push
 
 ## Naming convention
 
