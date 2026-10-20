@@ -42,6 +42,7 @@ jobs:
       packages: write
     outputs:
       sha_tag: ${{ steps.meta.outputs.sha_tag }}
+      branch_tag: ${{ steps.cache-tags.outputs.branch_tag }}
     steps:
       - uses: actions/checkout@v6
 
@@ -63,10 +64,22 @@ jobs:
           CACHE_FROM="type=registry,ref=${{ env.IMAGE }}:latest"
 
           if [[ "${{ github.ref_type }}" == "branch" ]]; then
+            # Registry cache refs are parsed as image references, so they reject
+            # '/' just like tags do. Keep the branch name readable and only
+            # replace the one character git allows that a reference does not.
             BRANCH="${{ github.ref_name }}"
+            BRANCH="${BRANCH//\//-}"
+
+            if [[ "${{ github.ref_name }}" == "${{ github.event.repository.default_branch }}" ]]; then
+              BRANCH_TAG="latest"
+            else
+              BRANCH_TAG="branch-${BRANCH}"
+            fi
+
             CACHE_FROM="type=registry,ref=${{ env.IMAGE }}:branch-${BRANCH} ${CACHE_FROM}"
             CACHE_FROM="type=registry,ref=${{ env.IMAGE }}:buildcache-${BRANCH} ${CACHE_FROM}"
             CACHE_TO="type=registry,ref=${{ env.IMAGE }}:buildcache-${BRANCH},mode=max"
+            echo "branch_tag=${BRANCH_TAG}" >> $GITHUB_OUTPUT
           else
             CACHE_TO=""
           fi
@@ -142,8 +155,12 @@ jobs:
       - name: Pull and push branch tag
         env:
           SHA_TAG: ${{ needs.build.outputs.sha_tag }}
-          BRANCH_TAG: ${{ (github.ref_name == 'main' || github.ref_name == 'master') && 'latest' || format('branch-{0}', github.ref_name) }}
+          BRANCH_TAG: ${{ needs.build.outputs.branch_tag }}
         run: |
+          if [[ -z "${BRANCH_TAG}" ]]; then
+            echo "::error::BRANCH_TAG is empty; expected the build job to export branch_tag"
+            exit 1
+          fi
           echo "Tagging with branch tag ${BRANCH_TAG}"
           docker pull ${{ env.IMAGE }}:${SHA_TAG}
           docker tag ${{ env.IMAGE }}:${SHA_TAG} ${{ env.IMAGE }}:${BRANCH_TAG}
