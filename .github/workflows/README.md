@@ -9,11 +9,14 @@ From an external repo:
 ```yaml
 jobs:
   my-job:
-    uses: cusk/dot-github/.github/workflows/<workflow>.yml@<version>
+    uses: cusk-io/.github/.github/workflows/<workflow>.yml@<version>
     secrets: inherit
 ```
 
 Replace `<version>` with a tag, branch, or SHA — e.g. `@main` or `@v1`.
+
+Note: the duplicated `.github` in the path is intended: once for the repo name,
+the other for the path within the repo.
 
 ## Reusable Workflows
 

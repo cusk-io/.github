@@ -13,7 +13,7 @@ jobs:
     secrets: inherit
 ```
 
-Note: duplicated `.gihub` in path is intended: once for repo name,
+Note: the duplicated `.github` in the path is intended: once for the repo name,
 the other for path within the repo.
 
 See [workflows/README.md](.github/workflows/README.md) for individual workflow docs.
