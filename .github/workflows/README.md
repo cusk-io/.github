@@ -1,39 +1,49 @@
 # Workflows
 
-This directory contains reusable workflows (triggered via `workflow_call`) and their self-tests.
+Reusable workflows (triggered via `workflow_call`) and their self-tests.
 
-## Importing
-
-From an external repo:
-
-```yaml
-jobs:
-  my-job:
-    uses: cusk-io/.github/.github/workflows/<workflow>.yml@<version>
-    secrets: inherit
-```
-
-Replace `<version>` with a tag, branch, or SHA — e.g. `@main` or `@v1`.
-
-Note: the duplicated `.github` in the path is intended: once for the repo name,
-the other for the path within the repo.
-
-## Reusable Workflows
-
-### docker-build-push
+For how to import these from another repo, see the
+[root README](../../README.md#reusable-workflows).
 
 ## Naming convention
 
-Use `test-` prefix for workflow used to test a reusable workflow
+Use the `test-` prefix for a workflow that tests a reusable workflow.
+All reusable workflows are triggered via `workflow_call`; self-tests use `push`
+and `workflow_dispatch`.
 
-- `docker-build-push.yml` – reusable workflow for building Docker images.
-- `test-docker-build-push.yml` – self-test for the above workflow (runs on push).
+## docker-build-push
 
-All reusable workflows are triggered via `workflow_call`. Self-tests use `push` and `workflow_dispatch`.
+Builds one service from a compose file with `docker buildx bake`, runs the
+compose `test` service, and only pushes branch/version tags after the tests pass.
+
+| Input                | Required | Default              | Description                                       |
+| -------------------- | -------- | -------------------- | ------------------------------------------------- |
+| `image_name`         | yes      | –                    | Full image name, e.g. `ghcr.io/cusk-io/my-app`    |
+| `compose_file`       | no       | `docker-compose.yml` | Compose file defining the build and test services |
+| `build_service_name` | no       | `app`                | Compose service to build (must have a `build:`)   |
+| `test_service_name`  | no       | `test`               | Compose service run as the test stage             |
+| `timeout_minutes`    | no       | `5`                  | Timeout for the test job                          |
+
+Output: `test_passed`.
+
+Tags, in order:
+
+- `sha-<7>` — pushed by every build.
+- `latest` on the default branch, `branch-<name>` on other branches — pushed
+  only if the tests pass (`/` in branch names becomes `-`).
+- `X.Y.Z`, `X.Y`, and `X` for `vX.Y.Z` tags — pushed only if the tests pass.
+
+Cache: `buildcache-<branch>` with `mode=max`, falling back to `latest`.
+
+## Self-tests
+
+- `test-docker-build-push.yml` — self-test for `docker-build-push`.
 
 ## ghcr-cleaner
 
-Safely remove stale images from GHCR using [quartx-analytics/ghcr-cleaner](https://github.com/marketplace/actions/ghcr-cleaner).  
+Not reusable — this repo's own scheduled workflow (daily 07:00 UTC, plus
+`workflow_dispatch`) that removes stale images from GHCR using
+[quartx-analytics/ghcr-cleaner](https://github.com/marketplace/actions/ghcr-cleaner).
 Handles multi‑arch, multi‑stage, and BuildKit cache images without breaking them.
 
 ### Key Points
