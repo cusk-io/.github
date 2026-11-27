@@ -2,6 +2,10 @@ name: Test docker-build-push
 
 on:
   push:
+    # Path filters are not evaluated for tag pushes, so without this a release
+    # tag would build and push the docker fixtures for no reason.
+    tags-ignore:
+      - "**"
     paths:
       - ".github/workflows/docker-build-push.yml"
       - ".github/workflows/test-docker-build-push.yml"
