@@ -1,0 +1,151 @@
+name: npm Publish
+
+on:
+  workflow_call:
+    inputs:
+      node-versions:
+        description: JSON array of Node versions for the test matrix
+        type: string
+        default: '["22","24"]'
+      publish-node-version:
+        description: Node version used for publishing
+        type: string
+        default: '24'
+      working-directory:
+        description: Directory containing package.json
+        type: string
+        default: '.'
+      install-command:
+        description: Command used to install dependencies
+        type: string
+        default: 'npm ci'
+      test-command:
+        description: Test command run on every version in the matrix
+        type: string
+        default: 'npm run test:run'
+      typecheck-command:
+        description: Type check command; leave empty to skip
+        type: string
+        default: 'npm run type-check'
+      dry-run:
+        description: Run install, type check, tests and pack, but do not publish or create a release
+        type: boolean
+        default: false
+      create-release:
+        description: Create a GitHub Release with generated notes after publishing
+        type: boolean
+        default: true
+      default-branch:
+        description: Branch a release tag must be an ancestor of; defaults to the repository default branch
+        type: string
+        default: ''
+
+jobs:
+  test:
+    name: Test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ${{ fromJSON(inputs.node-versions) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ inputs.working-directory }}
+        run: ${{ inputs.install-command }}
+
+      - name: Type check
+        if: inputs.typecheck-command != ''
+        working-directory: ${{ inputs.working-directory }}
+        run: ${{ inputs.typecheck-command }}
+
+      - name: Test
+        working-directory: ${{ inputs.working-directory }}
+        run: ${{ inputs.test-command }}
+
+  publish:
+    name: Publish to npm
+    needs: test
+    # A real publish requires a tag; a dry run is allowed from any ref.
+    if: inputs.dry-run || github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.publish-node-version }}
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Show tool versions
+        run: |
+          node --version
+          npm --version
+
+      - name: Verify npm CLI supports trusted publishing
+        run: |
+          minimum=11.5.1
+          actual=$(npm --version)
+          if [ "$(printf '%s\n%s\n' "$minimum" "$actual" | sort -V | head -n1)" != "$minimum" ]; then
+            echo "npm $actual is older than $minimum; OIDC trusted publishing requires >= $minimum" >&2
+            exit 1
+          fi
+
+      - name: Verify tag is on the default branch
+        if: ${{ !inputs.dry-run }}
+        env:
+          DEFAULT_BRANCH: ${{ inputs.default-branch || github.event.repository.default_branch }}
+        run: |
+          git fetch --no-tags origin "$DEFAULT_BRANCH"
+          git merge-base --is-ancestor "$GITHUB_SHA" "origin/$DEFAULT_BRANCH"
+
+      - name: Verify tag matches package.json version
+        if: ${{ !inputs.dry-run }}
+        working-directory: ${{ inputs.working-directory }}
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          test "${GITHUB_REF_NAME#v}" = "$version"
+
+      # prepack may run a build, so devDependencies are needed here.
+      - name: Install dependencies
+        working-directory: ${{ inputs.working-directory }}
+        run: ${{ inputs.install-command }}
+
+      - name: Publish
+        working-directory: ${{ inputs.working-directory }}
+        run: npm publish ${{ inputs.dry-run && '--dry-run' || '' }}
+
+  release:
+    name: GitHub release notes
+    needs: publish
+    if: ${{ !inputs.dry-run && inputs.create-release && github.ref_type == 'tag' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Create release from merged PRs and commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes

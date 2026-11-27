@@ -1,0 +1,15 @@
+{
+  "name": "cusk-npm-publish-fixture",
+  "version": "0.0.0",
+  "description": "Fixture package for test-npm-publish.yml; never published",
+  "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node build.js",
+    "prepack": "npm run build",
+    "test": "node test.js"
+  }
+}

@@ -1,0 +1,23 @@
+name: Test npm-publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    name: Dry run against fixture package
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/npm-publish.yml
+    with:
+      working-directory: fixtures/npm-package
+      test-command: npm test
+      typecheck-command: ''
+      dry-run: true
+      create-release: false

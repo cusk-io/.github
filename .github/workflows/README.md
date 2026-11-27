@@ -35,9 +35,65 @@ Tags, in order:
 
 Cache: `buildcache-<branch>` with `mode=max`, falling back to `latest`.
 
+## npm-publish
+
+Tests a Node package on a matrix of Node versions, then publishes it to the
+public npm registry from a tag using [trusted publishing
+(OIDC)](https://docs.npmjs.com/trusted-publishers) — no `NPM_TOKEN`. A GitHub
+Release with generated notes is created afterwards.
+
+Requires npm CLI >= 11.5.1 (Node 24 satisfies this) and the package's trusted
+publisher on npmjs.com configured for the **calling** workflow's filename
+(`release.yml` below), not for `npm-publish.yml`.
+
+| Input                  | Required | Default            | Description                                                        |
+| ---------------------- | -------- | ------------------ | ------------------------------------------------------------------ |
+| `node-versions`        | no       | `["22","24"]`      | JSON array of Node versions for the test matrix                    |
+| `publish-node-version` | no       | `24`               | Node version used to publish                                       |
+| `working-directory`    | no       | `.`                | Directory containing `package.json`                                |
+| `install-command`      | no       | `npm ci`           | Dependency install command                                         |
+| `test-command`         | no       | `npm run test:run` | Test command, run once per matrix entry                            |
+| `typecheck-command`    | no       | `npm run type-check` | Type check command; set to `''` to skip                          |
+| `dry-run`              | no       | `false`            | Run everything except `npm publish` and the GitHub Release         |
+| `create-release`       | no       | `true`             | Create a GitHub Release after publishing                           |
+| `default-branch`       | no       | repository default | Branch the release tag must be an ancestor of                      |
+
+No outputs.
+
+Behaviour:
+
+- The publish job only runs for tag refs, unless `dry-run` is set.
+- Before publishing it verifies the npm CLI version, that the tag is an
+  ancestor of the default branch, and that the tag (minus a leading `v`)
+  equals `package.json`'s version. A tag cut from a feature branch is rejected.
+- The caller must grant `id-token: write` (OIDC) and `contents: write` (release
+  notes). Called workflows cannot request more than the caller allows.
+
+Minimal caller:
+
+```yaml
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    uses: cusk-io/.github/.github/workflows/npm-publish.yml@v0.2.0
+    with:
+      node-versions: '["22","24"]'
+```
+
 ## Self-tests
 
 - `test-docker-build-push.yml` — self-test for `docker-build-push`.
+- `test-npm-publish.yml` — dry-run of `npm-publish` against
+  `fixtures/npm-package`, so nothing is published.
 
 ## ghcr-cleaner
 
