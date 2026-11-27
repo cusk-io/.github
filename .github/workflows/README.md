@@ -67,7 +67,10 @@ Behaviour:
   ancestor of the default branch, and that the tag (minus a leading `v`)
   equals `package.json`'s version. A tag cut from a feature branch is rejected.
 - The caller must grant `id-token: write` (OIDC) and `contents: write` (release
-  notes). Called workflows cannot request more than the caller allows.
+  notes). Called workflows cannot request more than the caller allows, and
+  GitHub validates this for every job in the called workflow — including jobs
+  skipped by `if`. Granting `contents: write` is therefore required even when
+  `create-release` is `false`.
 
 Minimal caller:
 

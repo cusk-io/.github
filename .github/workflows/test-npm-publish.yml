@@ -11,8 +11,10 @@ permissions:
 jobs:
   dry-run:
     name: Dry run against fixture package
+    # Must grant the union of every called job's permissions, even jobs that are
+    # skipped by `if`; GitHub validates this before the run starts.
     permissions:
-      contents: read
+      contents: write
       id-token: write
     uses: ./.github/workflows/npm-publish.yml
     with:
