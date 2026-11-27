@@ -2,8 +2,10 @@ name: Test docker-build-push
 
 on:
   push:
-    # Path filters are not evaluated for tag pushes, so without this a release
-    # tag would build and push the docker fixtures for no reason.
+    # A tag filter key disables branch runs unless branches are listed too, and
+    # path filters are not evaluated for tags. `**` keeps every branch, no tags.
+    branches:
+      - "**"
     tags-ignore:
       - "**"
     paths:
