@@ -53,5 +53,10 @@ Consumers pin a tag, so changes only reach them when you tag this repository:
    git push github vX.Y.Z
    ```
 
+`v*` tags are protected by a repository ruleset: only repository admins can
+create, move, or delete them, so a tag always resolves to the commit that
+consumers reviewed. If you add non-admin maintainers, give them the maintainer
+role or add a bypass actor for the tag ruleset.
+
 Treat renamed or removed inputs as breaking changes, and mention the new tag in
 the callers you update.
